@@ -55,6 +55,7 @@ const DB = {
 const FREQ_WEEKS = Array.from({length:16},(_,i)=>i+1);
 const freqLabel = (w) => w === 1 ? "Every week" : `Every ${w} weeks`;
 const freqDays  = (w) => (w || 4) * 7;
+const visitTotal = (c) => ((c.pricePerBag||0) * (c.bags||0)) + (c.deliveryPrice||0);
 const DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 const STATUS_STYLES = {
   "Due Today": { bg:"rgba(245,166,35,0.15)", text:"#f5a623", border:"rgba(245,166,35,0.35)" },
@@ -89,7 +90,7 @@ const DEFAULT_CUSTOMERS = [
   {
     id: 1, customer: "Marcus Holt", phone: "4806453994",
     address: "4821 Desert Willow Dr, Queen Creek, AZ 85142",
-    bags: 2, frequency: 4, pricePerVisit: 45,
+    bags: 2, frequency: 4, pricePerBag: 15, deliveryPrice: 15,
     serviceDay: "Monday",
     nextService: isoDate(addDays(today, 0)),
     lastService: isoDate(addDays(today, -28)),
@@ -99,7 +100,7 @@ const DEFAULT_CUSTOMERS = [
   {
     id: 2, customer: "Sandra Voss", phone: "4805551234",
     address: "112 Cactus Bloom Ln, Queen Creek, AZ 85142",
-    bags: 3, frequency: 4, pricePerVisit: 50,
+    bags: 3, frequency: 4, pricePerBag: 15, deliveryPrice: 5,
     serviceDay: "Monday",
     nextService: isoDate(addDays(today, 3)),
     lastService: isoDate(addDays(today, -27)),
@@ -109,7 +110,7 @@ const DEFAULT_CUSTOMERS = [
   {
     id: 3, customer: "Tony & Rita Espinoza", phone: "4807779999",
     address: "5503 Saguaro Ridge Ct, Queen Creek, AZ 85142",
-    bags: 2, frequency: 8, pricePerVisit: 50,
+    bags: 2, frequency: 8, pricePerBag: 15, deliveryPrice: 20,
     serviceDay: "Wednesday",
     nextService: isoDate(addDays(today, -3)),
     lastService: isoDate(addDays(today, -63)),
@@ -119,7 +120,7 @@ const DEFAULT_CUSTOMERS = [
   {
     id: 4, customer: "Derek Clune", phone: "4801112222",
     address: "2288 Ironwood Pass Dr, Gilbert, AZ 85298",
-    bags: 2, frequency: 4, pricePerVisit: 45,
+    bags: 2, frequency: 4, pricePerBag: 15, deliveryPrice: 15,
     serviceDay: "Thursday",
     nextService: isoDate(addDays(today, 10)),
     lastService: isoDate(addDays(today, -20)),
@@ -129,7 +130,7 @@ const DEFAULT_CUSTOMERS = [
   {
     id: 5, customer: "Pinnacle HOA", phone: "4803334444",
     address: "23000 N Pima Rd, San Tan Valley, AZ 85143",
-    bags: 4, frequency: 4, pricePerVisit: 80,
+    bags: 4, frequency: 4, pricePerBag: 15, deliveryPrice: 20,
     serviceDay: "Friday",
     nextService: isoDate(addDays(today, 7)),
     lastService: isoDate(addDays(today, -23)),
@@ -292,7 +293,7 @@ function HomeTab({customers, invoices, onViewCustomer, user}) {
     return s === "Due Today" || s === "Overdue";
   }).sort((a,b) => a.order - b.order);
   const completedToday = customers.filter(c => c.completedDates?.includes(t));
-  const totalMonthly = customers.reduce((s,c) => s + (c.pricePerVisit||0), 0);
+  const totalMonthly = customers.reduce((s,c) => s + visitTotal(c), 0);
   const pendingAmount = invoices.filter(i => i.status !== "Paid").reduce((s,i) => s + (i.amount||0), 0);
 
   return (
@@ -412,7 +413,7 @@ function CustomersTab({customers, onView, onAdd}) {
               <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
                 <span style={{fontSize:11,color:"#6b7280"}}>🛍️ {c.bags} bag{c.bags!==1?"s":""}/visit</span>
                 <span style={{fontSize:11,color:"#6b7280"}}>🔄 {freqLabel(c.frequency)}</span>
-                <span style={{fontSize:11,color:"#6b7280"}}>💵 ${c.pricePerVisit}/visit</span>
+                <span style={{fontSize:11,color:"#6b7280"}}>💵 ${visitTotal(c)}/visit</span>
               </div>
               {c.nextService && (
                 <div style={{fontSize:11,color:"#374151",marginTop:6}}>
@@ -477,11 +478,16 @@ function CustomerDetail({customer, onBack, onSave, onDelete, onMarkComplete, use
           </div>
 
           <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-            <Inp label="PRICE PER VISIT ($)" value={String(c.pricePerVisit)} onChange={v=>set("pricePerVisit",parseFloat(v)||0)} type="number"/>
             <Sel label="SERVICE DAY" value={c.serviceDay} onChange={v=>set("serviceDay",v)}>
               {DAYS.map(d=><option key={d} value={d}>{d}</option>)}
             </Sel>
           </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <Inp label="PRICE PER BAG ($)" value={String(c.pricePerBag||"")} onChange={v=>set("pricePerBag",parseFloat(v)||0)} type="number" placeholder="15"/>
+            <Inp label="DELIVERY FEE ($)" value={String(c.deliveryPrice||"")} onChange={v=>set("deliveryPrice",parseFloat(v)||0)} type="number" placeholder="15"/>
+          </div>
+          <div style={{fontSize:11,color:"#f5a623",marginBottom:12,marginTop:-6}}>Total per visit: ${visitTotal({...c})}</div>
 
           <Inp label="NEXT SERVICE DATE" value={c.nextService||""} onChange={v=>set("nextService",v)} type="date"/>
 
@@ -565,7 +571,9 @@ function CustomerDetail({customer, onBack, onSave, onDelete, onMarkComplete, use
           {[
             ["Bags per visit", `🛍️ ${c.bags} bag${c.bags!==1?"s":""}`],
             ["Frequency", `🔄 ${freqLabel(c.frequency)}`],
-            ["Price per visit", `💵 $${c.pricePerVisit}`],
+            ["Price per bag", `💵 $${c.pricePerBag||0}/bag`],
+            ["Delivery fee", `🚚 $${c.deliveryPrice||0}`],
+            ["Total per visit", `💰 $${visitTotal(c)}`],
             ["Service day", `📆 ${c.serviceDay}`],
             ["Last service", c.lastService ? `📅 ${fmtShort(c.lastService)}` : "—"],
             ["Next service", c.nextService ? `📅 ${fmtShort(c.nextService)}` : "—"],
@@ -593,7 +601,7 @@ function CustomerDetail({customer, onBack, onSave, onDelete, onMarkComplete, use
 function AddCustomer({onSave, onBack}) {
   const [c, setC] = useState({
     customer:"", phone:"", address:"",
-    bags:2, frequency:4, pricePerVisit:45,
+    bags:2, frequency:4, pricePerBag:15, deliveryPrice:15,
     serviceDay:"Monday",
     nextService: isoDate(addDays(new Date(),7)),
     notes:"", visits:0,
@@ -633,7 +641,9 @@ function AddCustomer({onSave, onBack}) {
         </div>
 
         <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
-          <Inp label="PRICE PER VISIT ($)" value={String(c.pricePerVisit)} onChange={v=>set("pricePerVisit",parseFloat(v)||0)} type="number"/>
+          <Inp label="PRICE PER BAG ($)" value={String(c.pricePerBag||"")} onChange={v=>set("pricePerBag",parseFloat(v)||0)} type="number" placeholder="15"/>
+          <Inp label="DELIVERY FEE ($)" value={String(c.deliveryPrice||"")} onChange={v=>set("deliveryPrice",parseFloat(v)||0)} type="number" placeholder="15"/>
+          <div style={{fontSize:11,color:"#f5a623",marginBottom:12,marginTop:-6}}>Total per visit: ${visitTotal({...c})}</div>
           <Sel label="SERVICE DAY" value={c.serviceDay} onChange={v=>set("serviceDay",v)}>
             {DAYS.map(d=><option key={d} value={d}>{d}</option>)}
           </Sel>
@@ -683,7 +693,7 @@ function ScheduleTab({customers, onViewCustomer}) {
             </div>
           </div>
           <div style={{textAlign:"right",flexShrink:0}}>
-            <div style={{fontSize:13,fontWeight:700,color:"#f5a623"}}>${c.pricePerVisit}</div>
+            <div style={{fontSize:13,fontWeight:700,color:"#f5a623"}}>${visitTotal(c)}</div>
             <div style={{fontSize:10,color:"#374151"}}>{c.serviceDay}</div>
           </div>
         </div>
@@ -753,7 +763,7 @@ function ScheduleTab({customers, onViewCustomer}) {
                   </div>
                 </div>
                 <div style={{textAlign:"right",flexShrink:0}}>
-                  <div style={{fontSize:12,fontWeight:700,color:"#e2e8f0"}}>${c.pricePerVisit}</div>
+                  <div style={{fontSize:12,fontWeight:700,color:"#e2e8f0"}}>${visitTotal(c)}</div>
                   <div style={{fontSize:10,color:"#374151"}}>{c.nextService ? fmtShort(c.nextService) : "—"}</div>
                 </div>
               </div>
@@ -777,7 +787,7 @@ function RevenueTab({customers, invoices, onUpdateInvoice, onAddInvoice, onDelet
   const totalPending = invoices.filter(i=>i.status==="Pending").reduce((s,i)=>s+i.amount,0);
   const totalOverdue = invoices.filter(i=>i.status==="Overdue").reduce((s,i)=>s+i.amount,0);
 
-  const monthlyRevenuePotential = customers.reduce((s,c)=>s+c.pricePerVisit,0);
+  const monthlyRevenuePotential = customers.reduce((s,c)=>s+visitTotal(c),0);
 
   const addInvoice = () => {
     const cust = customers.find(c=>c.id===parseInt(newInv.customerId));
@@ -786,7 +796,7 @@ function RevenueTab({customers, invoices, onUpdateInvoice, onAddInvoice, onDelet
       id: Date.now(),
       customerId: cust.id,
       customer: cust.customer,
-      amount: parseFloat(newInv.amount)||cust.pricePerVisit,
+      amount: parseFloat(newInv.amount)||visitTotal(cust),
       serviceDate: newInv.serviceDate,
       status: "Pending",
       paidDate: "",
@@ -830,7 +840,7 @@ function RevenueTab({customers, invoices, onUpdateInvoice, onAddInvoice, onDelet
         <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:200,display:"flex",alignItems:"flex-end"}}>
           <div style={{background:"#0d1626",borderRadius:"20px 20px 0 0",padding:"20px",width:"100%",maxHeight:"80vh",overflowY:"auto"}}>
             <div style={{fontSize:16,fontWeight:700,marginBottom:16}}>New Invoice</div>
-            <Sel label="CUSTOMER" value={String(newInv.customerId)} onChange={v=>setNewInv(x=>({...x,customerId:v,amount:customers.find(c=>c.id===parseInt(v))?.pricePerVisit||""}))}>
+            <Sel label="CUSTOMER" value={String(newInv.customerId)} onChange={v=>{ const cust=customers.find(c=>c.id===parseInt(v)); setNewInv(x=>({...x,customerId:v,amount:cust?visitTotal(cust):""})); }}>
               <option value="">Select customer...</option>
               {customers.map(c=><option key={c.id} value={c.id}>{c.customer}</option>)}
             </Sel>
@@ -1117,7 +1127,7 @@ function App() {
         id: Date.now(),
         customerId: c.id,
         customer: c.customer,
-        amount: c.pricePerVisit,
+        amount: visitTotal(c),
         serviceDate: t,
         status: "Pending",
         paidDate: "",
