@@ -1,0 +1,1158 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8"/>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no"/>
+  <meta name="theme-color" content="#060d1a"/>
+  <meta name="apple-mobile-web-app-capable" content="yes"/>
+  <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent"/>
+  <title>Desert Salt Delivery</title>
+  <style>
+    *{margin:0;padding:0;box-sizing:border-box;}
+    body{background:#060d1a;font-family:'DM Sans','Segoe UI',sans-serif;color:#e2e8f0;}
+    #root{min-height:100vh;}
+    input,select,textarea{color:#e2e8f0;}
+    input::placeholder{color:#374151;}
+    textarea::placeholder{color:#374151;}
+    ::-webkit-scrollbar{width:4px;}
+    ::-webkit-scrollbar-track{background:#0d1626;}
+    ::-webkit-scrollbar-thumb{background:#1f2937;border-radius:4px;}
+  </style>
+</head>
+<body>
+  <div id="root"></div>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script type="text/babel">
+const { useState, useEffect, useRef, useCallback } = React;
+
+// ── CONSTANTS ─────────────────────────────────────────────────────────────────
+const APP_VERSION = "1.0.0";
+
+// ── GOOGLE SHEETS SYNC ────────────────────────────────────────────────────────
+let SHEETS_URL = "";
+
+const DB = {
+  async post(body) {
+    if (!SHEETS_URL) return { success: false };
+    try {
+      const res = await fetch(SHEETS_URL, { method:"POST", headers:{"Content-Type":"text/plain"}, body:JSON.stringify(body) });
+      try { return await res.json(); } catch { return { success: true }; }
+    } catch {
+      try { await fetch(SHEETS_URL, { method:"POST", mode:"no-cors", headers:{"Content-Type":"text/plain"}, body:JSON.stringify(body) }); } catch {}
+      return { success: true };
+    }
+  },
+  async getAll() {
+    if (!SHEETS_URL) return null;
+    try { const res = await fetch(`${SHEETS_URL}?t=${Date.now()}`); const j = await res.json(); return j.success ? j.data : null; } catch { return null; }
+  },
+  async set(sheet, payload)   { return this.post({ sheet, action:"set",    payload }); },
+  async append(sheet, payload){ return this.post({ sheet, action:"append", payload }); },
+};
+const FREQ_OPTIONS = [
+  { value: "monthly",    label: "Monthly",       days: 30 },
+  { value: "every2mo",   label: "Every 2 Months", days: 60 },
+  { value: "weekly",     label: "Weekly",         days: 7  },
+  { value: "biweekly",   label: "Every 2 Weeks",  days: 14 },
+];
+const DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
+const STATUS_STYLES = {
+  "Due Today": { bg:"rgba(245,166,35,0.15)", text:"#f5a623", border:"rgba(245,166,35,0.35)" },
+  "Overdue":   { bg:"rgba(239,68,68,0.15)",  text:"#ef4444", border:"rgba(239,68,68,0.35)"  },
+  "Completed": { bg:"rgba(34,197,94,0.15)",  text:"#22c55e", border:"rgba(34,197,94,0.35)"  },
+  "Scheduled": { bg:"rgba(59,130,246,0.15)", text:"#60a5fa", border:"rgba(59,130,246,0.35)" },
+};
+
+// ── DEFAULTS ──────────────────────────────────────────────────────────────────
+const DEFAULT_USERS = [
+  { id:"owner", name:"Brett",   role:"owner", password:"owner123" },
+  { id:"tech1", name:"Tech 1",  role:"tech",  password:"tech123"  },
+];
+
+const today = new Date();
+const addDays = (d, n) => { const x = new Date(d); x.setDate(x.getDate()+n); return x; };
+const fmt = (d) => new Date(d).toLocaleDateString("en-US",{month:"short",day:"numeric",year:"numeric"});
+const fmtShort = (d) => new Date(d).toLocaleDateString("en-US",{month:"short",day:"numeric"});
+const isoDate = (d) => new Date(d).toISOString().split("T")[0];
+const todayISO = () => isoDate(new Date());
+
+function calcStatus(nextServiceISO, completedDates=[]) {
+  const t = todayISO();
+  if (completedDates.includes(t)) return "Completed";
+  if (!nextServiceISO) return "Scheduled";
+  if (nextServiceISO < t) return "Overdue";
+  if (nextServiceISO === t) return "Due Today";
+  return "Scheduled";
+}
+
+const DEFAULT_CUSTOMERS = [
+  {
+    id: 1, customer: "Marcus Holt", phone: "4806453994",
+    address: "4821 Desert Willow Dr, Queen Creek, AZ 85142",
+    bags: 2, frequency: "monthly", pricePerVisit: 45,
+    serviceDay: "Monday",
+    nextService: isoDate(addDays(today, 0)),
+    lastService: isoDate(addDays(today, -30)),
+    completedDates: [],
+    notes: "Gate code 1234. 2-car garage on left.", visits: 8, order: 1,
+  },
+  {
+    id: 2, customer: "Sandra Voss", phone: "4805551234",
+    address: "112 Cactus Bloom Ln, Queen Creek, AZ 85142",
+    bags: 3, frequency: "monthly", pricePerVisit: 50,
+    serviceDay: "Monday",
+    nextService: isoDate(addDays(today, 3)),
+    lastService: isoDate(addDays(today, -27)),
+    completedDates: [],
+    notes: "Large household — uses 3 bags.", visits: 5, order: 2,
+  },
+  {
+    id: 3, customer: "Tony & Rita Espinoza", phone: "4807779999",
+    address: "5503 Saguaro Ridge Ct, Queen Creek, AZ 85142",
+    bags: 2, frequency: "every2mo", pricePerVisit: 50,
+    serviceDay: "Wednesday",
+    nextService: isoDate(addDays(today, -3)),
+    lastService: isoDate(addDays(today, -63)),
+    completedDates: [],
+    notes: "Softener in garage. Dog in backyard.", visits: 3, order: 3,
+  },
+  {
+    id: 4, customer: "Derek Clune", phone: "4801112222",
+    address: "2288 Ironwood Pass Dr, Gilbert, AZ 85298",
+    bags: 2, frequency: "monthly", pricePerVisit: 45,
+    serviceDay: "Thursday",
+    nextService: isoDate(addDays(today, 10)),
+    lastService: isoDate(addDays(today, -20)),
+    completedDates: [],
+    notes: "", visits: 11, order: 4,
+  },
+  {
+    id: 5, customer: "Pinnacle HOA", phone: "4803334444",
+    address: "23000 N Pima Rd, San Tan Valley, AZ 85143",
+    bags: 4, frequency: "monthly", pricePerVisit: 80,
+    serviceDay: "Friday",
+    nextService: isoDate(addDays(today, 7)),
+    lastService: isoDate(addDays(today, -23)),
+    completedDates: [],
+    notes: "Commercial unit. 2 softeners side by side — 2 bags each.", visits: 6, order: 5,
+  },
+];
+
+const DEFAULT_INVOICES = [
+  { id:1, customerId:1, customer:"Marcus Holt",          amount:45, serviceDate: isoDate(addDays(today,-30)), status:"Paid",    paidDate: isoDate(addDays(today,-29)), notes:"" },
+  { id:2, customerId:2, customer:"Sandra Voss",          amount:50, serviceDate: isoDate(addDays(today,-27)), status:"Paid",    paidDate: isoDate(addDays(today,-27)), notes:"" },
+  { id:3, customerId:3, customer:"Tony & Rita Espinoza", amount:50, serviceDate: isoDate(addDays(today,-63)), status:"Overdue", paidDate:"", notes:"Follow up needed" },
+  { id:4, customerId:4, customer:"Derek Clune",          amount:45, serviceDate: isoDate(addDays(today,-20)), status:"Pending", paidDate:"", notes:"" },
+];
+
+// ── LOCAL STORAGE ─────────────────────────────────────────────────────────────
+const lsGet = (k,d) => { try { const v=localStorage.getItem(k); return v?JSON.parse(v):d; } catch { return d; } };
+const lsSet = (k,v) => { try { localStorage.setItem(k,JSON.stringify(v)); } catch {} };
+
+// ── SMALL COMPONENTS ──────────────────────────────────────────────────────────
+function Badge({status}) {
+  const s = STATUS_STYLES[status] || { bg:"#1f2937", text:"#6b7280", border:"rgba(255,255,255,0.1)" };
+  return (
+    <span style={{background:s.bg,color:s.text,border:`1px solid ${s.border}`,fontSize:10,fontWeight:700,padding:"3px 9px",borderRadius:20,whiteSpace:"nowrap"}}>
+      {status}
+    </span>
+  );
+}
+
+function Card({children, style={}}) {
+  return <div style={{background:"#0d1626",borderRadius:14,padding:"14px 16px",border:"1px solid rgba(255,255,255,0.06)",...style}}>{children}</div>;
+}
+
+function Inp({label, value, onChange, placeholder, type="text", error, readOnly=false}) {
+  return (
+    <div style={{marginBottom:12}}>
+      {label && <div style={{fontSize:11,color:"#6b7280",marginBottom:4,letterSpacing:1}}>{label}</div>}
+      <input
+        type={type} value={value}
+        onChange={e => !readOnly && onChange(e.target.value)}
+        placeholder={placeholder}
+        readOnly={readOnly}
+        style={{width:"100%",background: readOnly?"#0a1628":"#111827",border:`1px solid ${error?"rgba(239,68,68,0.5)":"rgba(255,255,255,0.08)"}`,borderRadius:9,padding:"10px 13px",fontSize:13,color:"#e2e8f0",outline:"none",boxSizing:"border-box",opacity:readOnly?0.6:1}}
+      />
+      {error && <div style={{fontSize:11,color:"#ef4444",marginTop:3}}>{error}</div>}
+    </div>
+  );
+}
+
+function Sel({label, value, onChange, children}) {
+  return (
+    <div style={{marginBottom:12}}>
+      {label && <div style={{fontSize:11,color:"#6b7280",marginBottom:4,letterSpacing:1}}>{label}</div>}
+      <select value={value} onChange={e=>onChange(e.target.value)}
+        style={{width:"100%",background:"#111827",border:"1px solid rgba(255,255,255,0.08)",borderRadius:9,padding:"10px 13px",fontSize:13,color:"#e2e8f0",outline:"none",boxSizing:"border-box",appearance:"none"}}>
+        {children}
+      </select>
+    </div>
+  );
+}
+
+function Textarea({label, value, onChange, placeholder, rows=3}) {
+  return (
+    <div style={{marginBottom:12}}>
+      {label && <div style={{fontSize:11,color:"#6b7280",marginBottom:4,letterSpacing:1}}>{label}</div>}
+      <textarea value={value} onChange={e=>onChange(e.target.value)} placeholder={placeholder} rows={rows}
+        style={{width:"100%",background:"#111827",border:"1px solid rgba(255,255,255,0.08)",borderRadius:9,padding:"10px 13px",fontSize:13,color:"#e2e8f0",outline:"none",boxSizing:"border-box",resize:"vertical",fontFamily:"inherit"}}/>
+    </div>
+  );
+}
+
+function PageHeader({onBack, title, right}) {
+  return (
+    <div style={{background:"#0a1628",borderBottom:"1px solid rgba(59,130,246,0.15)",padding:"13px 16px",display:"flex",alignItems:"center",gap:10,position:"sticky",top:0,zIndex:50}}>
+      {onBack && <button onClick={onBack} style={{background:"rgba(59,130,246,0.1)",border:"1px solid rgba(59,130,246,0.2)",borderRadius:8,padding:"6px 12px",fontSize:12,color:"#60a5fa",cursor:"pointer",whiteSpace:"nowrap"}}>← Back</button>}
+      <div style={{fontWeight:700,fontSize:15,flex:1}}>{title}</div>
+      {right}
+    </div>
+  );
+}
+
+function BottomNav({active, onChange, role}) {
+  const tabs = [
+    { id:"home",      label:"Home",     icon:"🏠" },
+    { id:"customers", label:"Customers",icon:"👥" },
+    { id:"schedule",  label:"Schedule", icon:"📅" },
+    ...(role==="owner" ? [{ id:"revenue", label:"Revenue", icon:"💰" }] : []),
+    { id:"settings",  label:"Settings", icon:"⚙️" },
+  ];
+  return (
+    <div style={{position:"fixed",bottom:0,left:0,right:0,background:"#080f1e",borderTop:"2px solid rgba(59,130,246,0.12)",display:"flex",zIndex:100}}>
+      {tabs.map(t => (
+        <button key={t.id} onClick={() => onChange(t.id)}
+          style={{flex:1,background:"none",border:"none",borderTop:active===t.id?"3px solid #3b82f6":"3px solid transparent",cursor:"pointer",padding:"9px 4px 7px",display:"flex",flexDirection:"column",alignItems:"center",gap:2}}>
+          <span style={{fontSize:18}}>{t.icon}</span>
+          <span style={{fontSize:9,fontWeight:700,color:active===t.id?"#3b82f6":"#475569"}}>{t.label}</span>
+        </button>
+      ))}
+    </div>
+  );
+}
+
+function SyncBadge({status}) {
+  if (status === "syncing") return <span style={{fontSize:10,color:"#60a5fa",background:"rgba(59,130,246,0.1)",border:"1px solid rgba(59,130,246,0.2)",borderRadius:20,padding:"2px 8px"}}>⏳ Syncing...</span>;
+  if (status === "synced")  return <span style={{fontSize:10,color:"#22c55e",background:"rgba(34,197,94,0.1)",border:"1px solid rgba(34,197,94,0.2)",borderRadius:20,padding:"2px 8px"}}>✓ Synced</span>;
+  if (status === "error")   return <span style={{fontSize:10,color:"#ef4444",background:"rgba(239,68,68,0.1)",border:"1px solid rgba(239,68,68,0.2)",borderRadius:20,padding:"2px 8px"}}>⚠ Sync Error</span>;
+  return null;
+}
+
+function StatBox({label, value, sub, color="#3b82f6"}) {
+  return (
+    <div style={{background:"#0d1626",borderRadius:12,padding:"12px 14px",border:`1px solid rgba(255,255,255,0.06)`,flex:1}}>
+      <div style={{fontSize:10,color:"#6b7280",marginBottom:4,letterSpacing:1}}>{label}</div>
+      <div style={{fontSize:22,fontWeight:800,color}}>{value}</div>
+      {sub && <div style={{fontSize:10,color:"#4b5563",marginTop:2}}>{sub}</div>}
+    </div>
+  );
+}
+
+// ── LOGIN ─────────────────────────────────────────────────────────────────────
+function LoginScreen({users, onLogin}) {
+  const [uid, setUid] = useState(users[0].id);
+  const [pw, setPw] = useState("");
+  const [err, setErr] = useState("");
+
+  const login = () => {
+    const u = users.find(x => x.id === uid);
+    if (!u || u.password !== pw) { setErr("Wrong password."); return; }
+    onLogin(u);
+  };
+
+  return (
+    <div style={{minHeight:"100vh",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",padding:24,background:"#060d1a"}}>
+      <div style={{marginBottom:8,fontSize:48}}>🧂</div>
+      <div style={{fontSize:22,fontWeight:800,color:"#e2e8f0",marginBottom:4}}>Desert Salt Delivery</div>
+      <div style={{fontSize:13,color:"#4b5563",marginBottom:32}}>Water softener salt service</div>
+
+      <div style={{width:"100%",maxWidth:340}}>
+        <Card>
+          <Sel label="WHO ARE YOU?" value={uid} onChange={setUid}>
+            {users.map(u => <option key={u.id} value={u.id}>{u.name} ({u.role})</option>)}
+          </Sel>
+          <Inp label="PASSWORD" value={pw} onChange={v=>{setPw(v);setErr("");}} placeholder="Enter password" type="password" error={err}/>
+          <button onClick={login}
+            style={{width:"100%",background:"linear-gradient(135deg,#3b82f6,#0ea5e9)",border:"none",borderRadius:12,padding:"14px",fontSize:15,fontWeight:700,color:"#fff",cursor:"pointer",marginTop:4}}>
+            Sign In
+          </button>
+        </Card>
+        <div style={{textAlign:"center",marginTop:16,fontSize:11,color:"#1f2937"}}>v{APP_VERSION}</div>
+      </div>
+    </div>
+  );
+}
+
+// ── HOME TAB ──────────────────────────────────────────────────────────────────
+function HomeTab({customers, invoices, onViewCustomer, user}) {
+  const t = todayISO();
+  const todayStops = customers.filter(c => {
+    const s = calcStatus(c.nextService, c.completedDates);
+    return s === "Due Today" || s === "Overdue";
+  }).sort((a,b) => a.order - b.order);
+  const completedToday = customers.filter(c => c.completedDates?.includes(t));
+  const totalMonthly = customers.reduce((s,c) => s + (c.pricePerVisit||0), 0);
+  const pendingAmount = invoices.filter(i => i.status !== "Paid").reduce((s,i) => s + (i.amount||0), 0);
+
+  return (
+    <div style={{padding:"16px",paddingBottom:90}}>
+      {/* Header */}
+      <div style={{marginBottom:20}}>
+        <div style={{fontSize:11,color:"#4b5563",letterSpacing:1}}>{new Date().toLocaleDateString("en-US",{weekday:"long",month:"long",day:"numeric"})}</div>
+        <div style={{fontSize:22,fontWeight:800,color:"#e2e8f0"}}>Hey {user.name} 👋</div>
+        <div style={{fontSize:13,color:"#4b5563"}}>Here's your day</div>
+      </div>
+
+      {/* Stats */}
+      <div style={{display:"flex",gap:10,marginBottom:20}}>
+        <StatBox label="CUSTOMERS" value={customers.length} sub="total active" color="#3b82f6"/>
+        <StatBox label="DUE TODAY" value={todayStops.length} sub={`${completedToday.length} done`} color={todayStops.length>0?"#f5a623":"#22c55e"}/>
+        <StatBox label="PENDING $" value={`$${pendingAmount}`} sub="uncollected" color="#ef4444"/>
+      </div>
+
+      {/* Today's Route */}
+      {todayStops.length > 0 ? (
+        <div style={{marginBottom:20}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#94a3b8",marginBottom:10,letterSpacing:1}}>TODAY'S STOPS ({todayStops.length})</div>
+          {todayStops.map(c => {
+            const status = calcStatus(c.nextService, c.completedDates);
+            return (
+              <div key={c.id} onClick={() => onViewCustomer(c.id)}
+                style={{background:"#0d1626",borderRadius:14,padding:"14px 16px",border:"1px solid rgba(255,255,255,0.06)",marginBottom:10,cursor:"pointer",display:"flex",alignItems:"center",gap:12}}>
+                <div style={{width:40,height:40,borderRadius:10,background:"rgba(59,130,246,0.12)",display:"flex",alignItems:"center",justifyContent:"center",fontSize:18,flexShrink:0}}>🧂</div>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:700,fontSize:14,marginBottom:2}}>{c.customer}</div>
+                  <div style={{fontSize:11,color:"#4b5563",marginBottom:4,whiteSpace:"nowrap",overflow:"hidden",textOverflow:"ellipsis"}}>{c.address}</div>
+                  <div style={{display:"flex",gap:6,alignItems:"center"}}>
+                    <Badge status={status}/>
+                    <span style={{fontSize:11,color:"#6b7280"}}>🛍️ {c.bags} bag{c.bags!==1?"s":""}</span>
+                  </div>
+                </div>
+                <div style={{color:"#374151",fontSize:18}}>›</div>
+              </div>
+            );
+          })}
+        </div>
+      ) : (
+        <Card style={{marginBottom:20,textAlign:"center",padding:"28px 16px"}}>
+          <div style={{fontSize:32,marginBottom:8}}>✅</div>
+          <div style={{fontWeight:700,fontSize:15,color:"#22c55e",marginBottom:4}}>All caught up!</div>
+          <div style={{fontSize:12,color:"#4b5563"}}>No stops due today.</div>
+        </Card>
+      )}
+
+      {/* Completed Today */}
+      {completedToday.length > 0 && (
+        <div style={{marginBottom:20}}>
+          <div style={{fontSize:13,fontWeight:700,color:"#94a3b8",marginBottom:10,letterSpacing:1}}>COMPLETED TODAY ({completedToday.length})</div>
+          {completedToday.map(c => (
+            <div key={c.id} onClick={() => onViewCustomer(c.id)}
+              style={{background:"rgba(34,197,94,0.04)",borderRadius:14,padding:"12px 16px",border:"1px solid rgba(34,197,94,0.12)",marginBottom:8,cursor:"pointer",display:"flex",alignItems:"center",gap:12}}>
+              <div style={{fontSize:18}}>✅</div>
+              <div style={{flex:1}}>
+                <div style={{fontWeight:600,fontSize:13}}>{c.customer}</div>
+                <div style={{fontSize:11,color:"#4b5563"}}>{c.bags} bag{c.bags!==1?"s":""} · {c.address.split(",")[0]}</div>
+              </div>
+            </div>
+          ))}
+        </div>
+      )}
+
+      {/* Salt needed today */}
+      {todayStops.length > 0 && (
+        <Card>
+          <div style={{fontSize:12,fontWeight:700,color:"#6b7280",marginBottom:8,letterSpacing:1}}>🛍️ SALT TO LOAD TODAY</div>
+          <div style={{fontSize:32,fontWeight:800,color:"#f5a623"}}>{todayStops.reduce((s,c)=>s+c.bags,0)} bags</div>
+          <div style={{fontSize:12,color:"#4b5563",marginTop:4}}>Across {todayStops.length} stops</div>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+// ── CUSTOMER LIST ─────────────────────────────────────────────────────────────
+function CustomersTab({customers, onView, onAdd}) {
+  const [search, setSearch] = useState("");
+  const filtered = customers.filter(c =>
+    c.customer.toLowerCase().includes(search.toLowerCase()) ||
+    c.address.toLowerCase().includes(search.toLowerCase())
+  ).sort((a,b) => {
+    const order = { "Overdue":0, "Due Today":1, "Scheduled":2, "Completed":3 };
+    const sa = calcStatus(a.nextService, a.completedDates);
+    const sb = calcStatus(b.nextService, b.completedDates);
+    return (order[sa]??4) - (order[sb]??4);
+  });
+
+  return (
+    <div style={{paddingBottom:90}}>
+      <div style={{padding:"16px 16px 8px",position:"sticky",top:0,background:"#060d1a",zIndex:10}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:12}}>
+          <div style={{fontSize:18,fontWeight:700}}>Customers <span style={{fontSize:13,color:"#4b5563",fontWeight:400}}>({customers.length})</span></div>
+          <button onClick={onAdd} style={{background:"linear-gradient(135deg,#3b82f6,#0ea5e9)",border:"none",borderRadius:10,padding:"8px 16px",fontSize:13,fontWeight:700,color:"#fff",cursor:"pointer"}}>+ Add</button>
+        </div>
+        <input value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search customers..."
+          style={{width:"100%",background:"#0d1626",border:"1px solid rgba(255,255,255,0.08)",borderRadius:10,padding:"10px 14px",fontSize:13,color:"#e2e8f0",outline:"none",boxSizing:"border-box"}}/>
+      </div>
+
+      <div style={{padding:"0 16px"}}>
+        {filtered.length === 0 && (
+          <div style={{textAlign:"center",padding:"40px 0",color:"#4b5563"}}>No customers found</div>
+        )}
+        {filtered.map(c => {
+          const status = calcStatus(c.nextService, c.completedDates);
+          const freq = FREQ_OPTIONS.find(f=>f.value===c.frequency);
+          return (
+            <div key={c.id} onClick={() => onView(c.id)}
+              style={{background:"#0d1626",borderRadius:14,padding:"14px 16px",border:"1px solid rgba(255,255,255,0.06)",marginBottom:10,cursor:"pointer"}}>
+              <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+                <div style={{fontWeight:700,fontSize:14,flex:1,marginRight:8}}>{c.customer}</div>
+                <Badge status={status}/>
+              </div>
+              <div style={{fontSize:11,color:"#4b5563",marginBottom:8,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.address}</div>
+              <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
+                <span style={{fontSize:11,color:"#6b7280"}}>🛍️ {c.bags} bag{c.bags!==1?"s":""}/visit</span>
+                <span style={{fontSize:11,color:"#6b7280"}}>🔄 {freq?.label||c.frequency}</span>
+                <span style={{fontSize:11,color:"#6b7280"}}>💵 ${c.pricePerVisit}/visit</span>
+              </div>
+              {c.nextService && (
+                <div style={{fontSize:11,color:"#374151",marginTop:6}}>
+                  Next: {fmtShort(c.nextService)}
+                  {c.lastService ? ` · Last: ${fmtShort(c.lastService)}` : ""}
+                </div>
+              )}
+            </div>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── CUSTOMER DETAIL ───────────────────────────────────────────────────────────
+function CustomerDetail({customer, onBack, onSave, onDelete, onMarkComplete, user}) {
+  const [c, setC] = useState({...customer});
+  const [editing, setEditing] = useState(false);
+  const [confirmDel, setConfirmDel] = useState(false);
+  const set = (k,v) => setC(x => ({...x,[k]:v}));
+  const status = calcStatus(c.nextService, c.completedDates);
+  const freq = FREQ_OPTIONS.find(f=>f.value===c.frequency);
+  const isDoneToday = c.completedDates?.includes(todayISO());
+
+  const save = () => {
+    onSave(c);
+    setEditing(false);
+  };
+
+  const markComplete = () => {
+    const t = todayISO();
+    const freqDays = FREQ_OPTIONS.find(f=>f.value===c.frequency)?.days || 30;
+    const next = isoDate(addDays(new Date(), freqDays));
+    const updated = {
+      ...c,
+      lastService: t,
+      nextService: next,
+      completedDates: [...(c.completedDates||[]).filter(d=>d!==t), t],
+      visits: (c.visits||0) + 1,
+    };
+    setC(updated);
+    onMarkComplete(updated);
+  };
+
+  const openMaps = () => window.open(`https://maps.google.com/?q=${encodeURIComponent(c.address)}`,"_blank");
+
+  if (editing) {
+    return (
+      <div style={{paddingBottom:90}}>
+        <PageHeader onBack={() => setEditing(false)} title="Edit Customer"/>
+        <div style={{padding:"16px"}}>
+          <Inp label="CUSTOMER NAME" value={c.customer} onChange={v=>set("customer",v)} placeholder="Full name"/>
+          <Inp label="PHONE" value={c.phone} onChange={v=>set("phone",v)} placeholder="4806453994" type="tel"/>
+          <Inp label="ADDRESS" value={c.address} onChange={v=>set("address",v)} placeholder="123 Main St, Queen Creek, AZ 85142"/>
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <Sel label="BAGS PER VISIT" value={String(c.bags)} onChange={v=>set("bags",parseInt(v))}>
+              {[1,2,3,4,5,6].map(n=><option key={n} value={n}>{n} bag{n!==1?"s":""}</option>)}
+            </Sel>
+            <Sel label="FREQUENCY" value={c.frequency} onChange={v=>set("frequency",v)}>
+              {FREQ_OPTIONS.map(f=><option key={f.value} value={f.value}>{f.label}</option>)}
+            </Sel>
+          </div>
+
+          <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+            <Inp label="PRICE PER VISIT ($)" value={String(c.pricePerVisit)} onChange={v=>set("pricePerVisit",parseFloat(v)||0)} type="number"/>
+            <Sel label="SERVICE DAY" value={c.serviceDay} onChange={v=>set("serviceDay",v)}>
+              {DAYS.map(d=><option key={d} value={d}>{d}</option>)}
+            </Sel>
+          </div>
+
+          <Inp label="NEXT SERVICE DATE" value={c.nextService||""} onChange={v=>set("nextService",v)} type="date"/>
+
+          <Textarea label="NOTES" value={c.notes||""} onChange={v=>set("notes",v)} placeholder="Gate code, dog info, softener location..."/>
+
+          <button onClick={save} style={{width:"100%",background:"linear-gradient(135deg,#3b82f6,#0ea5e9)",border:"none",borderRadius:12,padding:"14px",fontSize:15,fontWeight:700,color:"#fff",cursor:"pointer",marginBottom:10}}>
+            Save Changes
+          </button>
+
+          {user.role==="owner" && (
+            confirmDel ? (
+              <div style={{background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.25)",borderRadius:12,padding:"14px",textAlign:"center"}}>
+                <div style={{fontSize:13,color:"#ef4444",marginBottom:10}}>Delete this customer?</div>
+                <div style={{display:"flex",gap:8}}>
+                  <button onClick={()=>onDelete(c.id)} style={{flex:1,background:"rgba(239,68,68,0.15)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:10,padding:"10px",fontSize:13,color:"#ef4444",cursor:"pointer",fontWeight:700}}>Yes, Delete</button>
+                  <button onClick={()=>setConfirmDel(false)} style={{flex:1,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:10,padding:"10px",fontSize:13,color:"#6b7280",cursor:"pointer"}}>Cancel</button>
+                </div>
+              </div>
+            ) : (
+              <button onClick={()=>setConfirmDel(true)} style={{width:"100%",background:"rgba(239,68,68,0.06)",border:"1px solid rgba(239,68,68,0.2)",borderRadius:12,padding:"12px",fontSize:13,color:"#ef4444",cursor:"pointer"}}>
+                Delete Customer
+              </button>
+            )
+          )}
+        </div>
+      </div>
+    );
+  }
+
+  return (
+    <div style={{paddingBottom:90}}>
+      <PageHeader
+        onBack={onBack}
+        title={c.customer}
+        right={
+          <button onClick={()=>setEditing(true)}
+            style={{background:"rgba(59,130,246,0.1)",border:"1px solid rgba(59,130,246,0.2)",borderRadius:8,padding:"6px 12px",fontSize:12,color:"#60a5fa",cursor:"pointer"}}>
+            Edit
+          </button>
+        }
+      />
+
+      <div style={{padding:"16px"}}>
+        {/* Status + Mark Complete */}
+        <div style={{display:"flex",gap:10,alignItems:"center",marginBottom:16}}>
+          <Badge status={status}/>
+          <span style={{fontSize:12,color:"#4b5563"}}>{c.visits||0} total visits</span>
+        </div>
+
+        {!isDoneToday ? (
+          <button onClick={markComplete}
+            style={{width:"100%",background:"linear-gradient(135deg,#22c55e,#16a34a)",border:"none",borderRadius:14,padding:"16px",fontSize:16,fontWeight:700,color:"#fff",cursor:"pointer",marginBottom:16}}>
+            ✅ Mark Complete — {c.bags} Bag{c.bags!==1?"s":""}
+          </button>
+        ) : (
+          <div style={{width:"100%",background:"rgba(34,197,94,0.1)",border:"1px solid rgba(34,197,94,0.3)",borderRadius:14,padding:"16px",textAlign:"center",marginBottom:16}}>
+            <div style={{fontSize:14,fontWeight:700,color:"#22c55e"}}>✅ Completed Today</div>
+            <div style={{fontSize:11,color:"#4b5563",marginTop:2}}>Next service: {fmtShort(c.nextService)}</div>
+          </div>
+        )}
+
+        {/* Info Card */}
+        <Card style={{marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#6b7280",marginBottom:10,letterSpacing:1}}>CONTACT & LOCATION</div>
+          <div style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+            <span style={{fontSize:12,color:"#6b7280"}}>Phone</span>
+            <a href={`tel:${c.phone}`} style={{fontSize:12,color:"#60a5fa",fontWeight:600,textDecoration:"none"}}>{c.phone}</a>
+          </div>
+          <div style={{padding:"7px 0",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+            <div style={{fontSize:12,color:"#6b7280",marginBottom:2}}>Address</div>
+            <div style={{fontSize:12,color:"#e2e8f0"}}>{c.address}</div>
+          </div>
+          <button onClick={openMaps} style={{width:"100%",background:"rgba(59,130,246,0.08)",border:"1px solid rgba(59,130,246,0.15)",borderRadius:9,padding:"9px",fontSize:12,color:"#60a5fa",cursor:"pointer",marginTop:8}}>
+            📍 Open in Maps
+          </button>
+        </Card>
+
+        {/* Service Details */}
+        <Card style={{marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#6b7280",marginBottom:10,letterSpacing:1}}>SERVICE DETAILS</div>
+          {[
+            ["Bags per visit", `🛍️ ${c.bags} bag${c.bags!==1?"s":""}`],
+            ["Frequency", `🔄 ${freq?.label||c.frequency}`],
+            ["Price per visit", `💵 $${c.pricePerVisit}`],
+            ["Service day", `📆 ${c.serviceDay}`],
+            ["Last service", c.lastService ? `📅 ${fmtShort(c.lastService)}` : "—"],
+            ["Next service", c.nextService ? `📅 ${fmtShort(c.nextService)}` : "—"],
+          ].map(([label,val]) => (
+            <div key={label} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+              <span style={{fontSize:12,color:"#6b7280"}}>{label}</span>
+              <span style={{fontSize:12,color:"#e2e8f0",fontWeight:600}}>{val}</span>
+            </div>
+          ))}
+        </Card>
+
+        {/* Notes */}
+        {c.notes ? (
+          <Card>
+            <div style={{fontSize:12,fontWeight:700,color:"#6b7280",marginBottom:8,letterSpacing:1}}>📝 NOTES</div>
+            <div style={{fontSize:13,color:"#e2e8f0",lineHeight:1.6}}>{c.notes}</div>
+          </Card>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
+// ── ADD CUSTOMER ──────────────────────────────────────────────────────────────
+function AddCustomer({onSave, onBack}) {
+  const [c, setC] = useState({
+    customer:"", phone:"", address:"",
+    bags:2, frequency:"monthly", pricePerVisit:45,
+    serviceDay:"Monday",
+    nextService: isoDate(addDays(new Date(),7)),
+    notes:"", visits:0,
+    completedDates:[],
+  });
+  const [errors, setErrors] = useState({});
+  const set = (k,v) => setC(x=>({...x,[k]:v}));
+
+  const validate = () => {
+    const e = {};
+    if (!c.customer.trim()) e.customer = "Name required";
+    if (!c.address.trim()) e.address = "Address required";
+    return e;
+  };
+
+  const save = () => {
+    const e = validate();
+    if (Object.keys(e).length) { setErrors(e); return; }
+    onSave({ ...c, id: Date.now(), order: Date.now(), lastService: null });
+  };
+
+  return (
+    <div style={{paddingBottom:90}}>
+      <PageHeader onBack={onBack} title="New Customer"/>
+      <div style={{padding:"16px"}}>
+        <Inp label="CUSTOMER NAME *" value={c.customer} onChange={v=>set("customer",v)} placeholder="Full name or business" error={errors.customer}/>
+        <Inp label="PHONE" value={c.phone} onChange={v=>set("phone",v)} placeholder="4806453994" type="tel"/>
+        <Inp label="ADDRESS *" value={c.address} onChange={v=>set("address",v)} placeholder="123 Main St, Queen Creek, AZ 85142" error={errors.address}/>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Sel label="BAGS PER VISIT" value={String(c.bags)} onChange={v=>set("bags",parseInt(v))}>
+            {[1,2,3,4,5,6].map(n=><option key={n} value={n}>{n} bag{n!==1?"s":""}</option>)}
+          </Sel>
+          <Sel label="FREQUENCY" value={c.frequency} onChange={v=>set("frequency",v)}>
+            {FREQ_OPTIONS.map(f=><option key={f.value} value={f.value}>{f.label}</option>)}
+          </Sel>
+        </div>
+
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:12}}>
+          <Inp label="PRICE PER VISIT ($)" value={String(c.pricePerVisit)} onChange={v=>set("pricePerVisit",parseFloat(v)||0)} type="number"/>
+          <Sel label="SERVICE DAY" value={c.serviceDay} onChange={v=>set("serviceDay",v)}>
+            {DAYS.map(d=><option key={d} value={d}>{d}</option>)}
+          </Sel>
+        </div>
+
+        <Inp label="FIRST SERVICE DATE" value={c.nextService} onChange={v=>set("nextService",v)} type="date"/>
+        <Textarea label="NOTES" value={c.notes} onChange={v=>set("notes",v)} placeholder="Gate code, dog info, softener location..."/>
+
+        <button onClick={save}
+          style={{width:"100%",background:"linear-gradient(135deg,#3b82f6,#0ea5e9)",border:"none",borderRadius:12,padding:"14px",fontSize:15,fontWeight:700,color:"#fff",cursor:"pointer"}}>
+          Add Customer
+        </button>
+      </div>
+    </div>
+  );
+}
+
+// ── SCHEDULE TAB ──────────────────────────────────────────────────────────────
+function ScheduleTab({customers, onViewCustomer}) {
+  const [view, setView] = useState("upcoming"); // upcoming | all
+
+  const upcoming = customers
+    .map(c => ({ ...c, status: calcStatus(c.nextService, c.completedDates) }))
+    .sort((a,b) => {
+      if (!a.nextService) return 1;
+      if (!b.nextService) return -1;
+      return a.nextService.localeCompare(b.nextService);
+    });
+
+  const overdue = upcoming.filter(c => c.status === "Overdue");
+  const dueToday = upcoming.filter(c => c.status === "Due Today");
+  const scheduled = upcoming.filter(c => c.status === "Scheduled" || c.status === "Completed");
+
+  const Section = ({title, items, color="#6b7280"}) => items.length === 0 ? null : (
+    <div style={{marginBottom:20}}>
+      <div style={{fontSize:12,fontWeight:700,color,marginBottom:10,letterSpacing:1}}>{title} ({items.length})</div>
+      {items.map(c => (
+        <div key={c.id} onClick={() => onViewCustomer(c.id)}
+          style={{background:"#0d1626",borderRadius:12,padding:"12px 14px",border:"1px solid rgba(255,255,255,0.06)",marginBottom:8,cursor:"pointer",display:"flex",alignItems:"center",gap:12}}>
+          <div style={{flex:1,minWidth:0}}>
+            <div style={{fontWeight:600,fontSize:13,marginBottom:2}}>{c.customer}</div>
+            <div style={{fontSize:11,color:"#4b5563",overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.address.split(",")[0]}</div>
+            <div style={{display:"flex",gap:8,marginTop:4,alignItems:"center",flexWrap:"wrap"}}>
+              <Badge status={c.status}/>
+              <span style={{fontSize:11,color:"#6b7280"}}>{c.bags} bag{c.bags!==1?"s":""}</span>
+              {c.nextService && <span style={{fontSize:11,color:"#374151"}}>{fmtShort(c.nextService)}</span>}
+            </div>
+          </div>
+          <div style={{textAlign:"right",flexShrink:0}}>
+            <div style={{fontSize:13,fontWeight:700,color:"#f5a623"}}>${c.pricePerVisit}</div>
+            <div style={{fontSize:10,color:"#374151"}}>{c.serviceDay}</div>
+          </div>
+        </div>
+      ))}
+    </div>
+  );
+
+  // Next 4 weeks salt totals
+  const weeksOut = [0,1,2,3].map(w => {
+    const start = addDays(today, w*7);
+    const end   = addDays(today, w*7+6);
+    const stops = customers.filter(c => {
+      if (!c.nextService) return false;
+      const d = new Date(c.nextService);
+      return d >= start && d <= end;
+    });
+    return { label: w===0?"This week":w===1?"Next week":`+${w} weeks`, stops, bags: stops.reduce((s,c)=>s+c.bags,0) };
+  });
+
+  return (
+    <div style={{paddingBottom:90}}>
+      <div style={{padding:"16px 16px 8px",position:"sticky",top:0,background:"#060d1a",zIndex:10}}>
+        <div style={{fontSize:18,fontWeight:700,marginBottom:12}}>Schedule</div>
+        <div style={{display:"flex",gap:8}}>
+          {["upcoming","all"].map(v=>(
+            <button key={v} onClick={()=>setView(v)}
+              style={{flex:1,background:view===v?"rgba(59,130,246,0.15)":"rgba(255,255,255,0.04)",border:`1px solid ${view===v?"rgba(59,130,246,0.35)":"rgba(255,255,255,0.08)"}`,borderRadius:10,padding:"8px",fontSize:12,fontWeight:700,color:view===v?"#60a5fa":"#6b7280",cursor:"pointer"}}>
+              {v==="upcoming"?"📅 Upcoming":"👥 All Customers"}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      <div style={{padding:"0 16px"}}>
+        {view === "upcoming" ? (
+          <>
+            {/* Salt forecast */}
+            <div style={{display:"flex",gap:8,marginBottom:20,overflowX:"auto",paddingBottom:4}}>
+              {weeksOut.map((w,i) => (
+                <div key={i} style={{background:"#0d1626",borderRadius:12,padding:"10px 12px",border:"1px solid rgba(255,255,255,0.06)",minWidth:100,flexShrink:0}}>
+                  <div style={{fontSize:10,color:"#4b5563",marginBottom:2}}>{w.label}</div>
+                  <div style={{fontSize:20,fontWeight:800,color:"#f5a623"}}>{w.bags}</div>
+                  <div style={{fontSize:10,color:"#6b7280"}}>bags · {w.stops.length} stops</div>
+                </div>
+              ))}
+            </div>
+
+            <Section title="⚠️ OVERDUE" items={overdue} color="#ef4444"/>
+            <Section title="📅 DUE TODAY" items={dueToday} color="#f5a623"/>
+            <Section title="🗓️ UPCOMING" items={scheduled} color="#60a5fa"/>
+
+            {overdue.length===0 && dueToday.length===0 && scheduled.length===0 && (
+              <div style={{textAlign:"center",padding:"40px 0",color:"#4b5563"}}>No upcoming stops</div>
+            )}
+          </>
+        ) : (
+          <div style={{marginTop:8}}>
+            {upcoming.map(c => (
+              <div key={c.id} onClick={()=>onViewCustomer(c.id)}
+                style={{background:"#0d1626",borderRadius:12,padding:"12px 14px",border:"1px solid rgba(255,255,255,0.06)",marginBottom:8,cursor:"pointer",display:"flex",alignItems:"center",gap:12}}>
+                <div style={{flex:1,minWidth:0}}>
+                  <div style={{fontWeight:600,fontSize:13,marginBottom:2}}>{c.customer}</div>
+                  <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
+                    <Badge status={c.status}/>
+                    <span style={{fontSize:11,color:"#6b7280"}}>{c.bags} bags</span>
+                    <span style={{fontSize:11,color:"#374151"}}>{FREQ_OPTIONS.find(f=>f.value===c.frequency)?.label}</span>
+                  </div>
+                </div>
+                <div style={{textAlign:"right",flexShrink:0}}>
+                  <div style={{fontSize:12,fontWeight:700,color:"#e2e8f0"}}>${c.pricePerVisit}</div>
+                  <div style={{fontSize:10,color:"#374151"}}>{c.nextService ? fmtShort(c.nextService) : "—"}</div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── REVENUE TAB ───────────────────────────────────────────────────────────────
+function RevenueTab({customers, invoices, onUpdateInvoice, onAddInvoice}) {
+  const [filter, setFilter] = useState("all");
+  const [showAdd, setShowAdd] = useState(false);
+  const [newInv, setNewInv] = useState({ customerId:"", amount:"", serviceDate: todayISO(), notes:"" });
+
+  const filtered = invoices.filter(i => filter==="all" || i.status.toLowerCase()===filter);
+  const totalRevenue = invoices.filter(i=>i.status==="Paid").reduce((s,i)=>s+i.amount,0);
+  const totalPending = invoices.filter(i=>i.status==="Pending").reduce((s,i)=>s+i.amount,0);
+  const totalOverdue = invoices.filter(i=>i.status==="Overdue").reduce((s,i)=>s+i.amount,0);
+
+  const monthlyRevenuePotential = customers.reduce((s,c)=>s+c.pricePerVisit,0);
+
+  const addInvoice = () => {
+    const cust = customers.find(c=>c.id===parseInt(newInv.customerId));
+    if (!cust) return;
+    onAddInvoice({
+      id: Date.now(),
+      customerId: cust.id,
+      customer: cust.customer,
+      amount: parseFloat(newInv.amount)||cust.pricePerVisit,
+      serviceDate: newInv.serviceDate,
+      status: "Pending",
+      paidDate: "",
+      notes: newInv.notes,
+    });
+    setShowAdd(false);
+    setNewInv({ customerId:"", amount:"", serviceDate: todayISO(), notes:"" });
+  };
+
+  const statusColor = { Paid:"#22c55e", Pending:"#f5a623", Overdue:"#ef4444" };
+
+  return (
+    <div style={{paddingBottom:90}}>
+      <div style={{padding:"16px 16px 8px"}}>
+        <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:16}}>
+          <div style={{fontSize:18,fontWeight:700}}>Revenue</div>
+          <button onClick={()=>setShowAdd(true)} style={{background:"linear-gradient(135deg,#22c55e,#16a34a)",border:"none",borderRadius:10,padding:"8px 14px",fontSize:12,fontWeight:700,color:"#fff",cursor:"pointer"}}>+ Invoice</button>
+        </div>
+
+        {/* Stats */}
+        <div style={{display:"grid",gridTemplateColumns:"1fr 1fr",gap:10,marginBottom:16}}>
+          <StatBox label="COLLECTED" value={`$${totalRevenue}`} sub="paid invoices" color="#22c55e"/>
+          <StatBox label="PENDING" value={`$${totalPending + totalOverdue}`} sub="awaiting payment" color="#f5a623"/>
+          <StatBox label="MONTHLY EST." value={`$${monthlyRevenuePotential}`} sub={`${customers.length} customers`} color="#3b82f6"/>
+          <StatBox label="ANNUAL EST." value={`$${(monthlyRevenuePotential*12).toLocaleString()}`} sub="if all monthly" color="#8b5cf6"/>
+        </div>
+
+        {/* Filter */}
+        <div style={{display:"flex",gap:6,overflowX:"auto",paddingBottom:4}}>
+          {["all","paid","pending","overdue"].map(f=>(
+            <button key={f} onClick={()=>setFilter(f)}
+              style={{background:filter===f?"rgba(59,130,246,0.15)":"rgba(255,255,255,0.04)",border:`1px solid ${filter===f?"rgba(59,130,246,0.35)":"rgba(255,255,255,0.08)"}`,borderRadius:10,padding:"6px 14px",fontSize:11,fontWeight:700,color:filter===f?"#60a5fa":"#6b7280",cursor:"pointer",whiteSpace:"nowrap",flexShrink:0}}>
+              {f.charAt(0).toUpperCase()+f.slice(1)}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Add Invoice Modal */}
+      {showAdd && (
+        <div style={{position:"fixed",inset:0,background:"rgba(0,0,0,0.8)",zIndex:200,display:"flex",alignItems:"flex-end"}}>
+          <div style={{background:"#0d1626",borderRadius:"20px 20px 0 0",padding:"20px",width:"100%",maxHeight:"80vh",overflowY:"auto"}}>
+            <div style={{fontSize:16,fontWeight:700,marginBottom:16}}>New Invoice</div>
+            <Sel label="CUSTOMER" value={String(newInv.customerId)} onChange={v=>setNewInv(x=>({...x,customerId:v,amount:customers.find(c=>c.id===parseInt(v))?.pricePerVisit||""}))}>
+              <option value="">Select customer...</option>
+              {customers.map(c=><option key={c.id} value={c.id}>{c.customer}</option>)}
+            </Sel>
+            <Inp label="AMOUNT ($)" value={String(newInv.amount)} onChange={v=>setNewInv(x=>({...x,amount:v}))} type="number" placeholder="45"/>
+            <Inp label="SERVICE DATE" value={newInv.serviceDate} onChange={v=>setNewInv(x=>({...x,serviceDate:v}))} type="date"/>
+            <Textarea label="NOTES" value={newInv.notes} onChange={v=>setNewInv(x=>({...x,notes:v}))} placeholder="Optional notes"/>
+            <div style={{display:"flex",gap:10}}>
+              <button onClick={addInvoice} style={{flex:1,background:"linear-gradient(135deg,#22c55e,#16a34a)",border:"none",borderRadius:12,padding:"13px",fontSize:14,fontWeight:700,color:"#fff",cursor:"pointer"}}>Add</button>
+              <button onClick={()=>setShowAdd(false)} style={{flex:1,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:12,padding:"13px",fontSize:14,color:"#6b7280",cursor:"pointer"}}>Cancel</button>
+            </div>
+          </div>
+        </div>
+      )}
+
+      <div style={{padding:"0 16px"}}>
+        {filtered.length === 0 && (
+          <div style={{textAlign:"center",padding:"40px 0",color:"#4b5563"}}>No invoices</div>
+        )}
+        {filtered.map(inv => (
+          <div key={inv.id} style={{background:"#0d1626",borderRadius:14,padding:"14px 16px",border:"1px solid rgba(255,255,255,0.06)",marginBottom:10}}>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"flex-start",marginBottom:6}}>
+              <div style={{fontWeight:700,fontSize:14}}>{inv.customer}</div>
+              <div style={{fontSize:18,fontWeight:800,color:statusColor[inv.status]||"#e2e8f0"}}>${inv.amount}</div>
+            </div>
+            <div style={{display:"flex",justifyContent:"space-between",alignItems:"center"}}>
+              <div>
+                <span style={{fontSize:11,color:"#4b5563"}}>Service: {fmtShort(inv.serviceDate)}</span>
+                {inv.paidDate && <span style={{fontSize:11,color:"#4b5563"}}> · Paid: {fmtShort(inv.paidDate)}</span>}
+              </div>
+              <Badge status={inv.status}/>
+            </div>
+            {inv.notes ? <div style={{fontSize:11,color:"#374151",marginTop:4}}>{inv.notes}</div> : null}
+
+            {/* Status actions */}
+            {inv.status !== "Paid" && (
+              <div style={{display:"flex",gap:8,marginTop:10}}>
+                <button onClick={()=>onUpdateInvoice({...inv,status:"Paid",paidDate:todayISO()})}
+                  style={{flex:1,background:"rgba(34,197,94,0.1)",border:"1px solid rgba(34,197,94,0.25)",borderRadius:9,padding:"8px",fontSize:12,color:"#22c55e",cursor:"pointer",fontWeight:700}}>
+                  ✓ Mark Paid
+                </button>
+                {inv.status==="Pending" && (
+                  <button onClick={()=>onUpdateInvoice({...inv,status:"Overdue"})}
+                    style={{flex:1,background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.2)",borderRadius:9,padding:"8px",fontSize:12,color:"#ef4444",cursor:"pointer"}}>
+                    Mark Overdue
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+// ── SETTINGS TAB ──────────────────────────────────────────────────────────────
+function SettingsTab({user, users, onLogout, onUpdateUsers, onSyncNow, syncStatus}) {
+  const [showPwChange, setShowPwChange] = useState(false);
+  const [newPw, setNewPw] = useState("");
+  const [confirmPw, setConfirmPw] = useState("");
+  const [pwErr, setPwErr] = useState("");
+  const [pwOk, setPwOk] = useState(false);
+  const [sheetsUrl, setSheetsUrl] = useState(() => lsGet("dsd_sheets_url", ""));
+  const [urlSaved, setUrlSaved] = useState(false);
+
+  const saveUrl = () => {
+    const trimmed = sheetsUrl.trim();
+    SHEETS_URL = trimmed;
+    lsSet("dsd_sheets_url", trimmed);
+    setUrlSaved(true);
+    if (trimmed) onSyncNow();
+    setTimeout(() => setUrlSaved(false), 2000);
+  };
+
+  const changePw = () => {
+    if (!newPw) { setPwErr("Enter a password"); return; }
+    if (newPw !== confirmPw) { setPwErr("Passwords don't match"); return; }
+    const updated = users.map(u => u.id===user.id ? {...u, password:newPw} : u);
+    onUpdateUsers(updated);
+    setPwOk(true);
+    setPwErr("");
+    setNewPw(""); setConfirmPw("");
+    setTimeout(() => { setPwOk(false); setShowPwChange(false); }, 1500);
+  };
+
+  return (
+    <div style={{padding:"16px",paddingBottom:90}}>
+      <div style={{fontSize:18,fontWeight:700,marginBottom:20}}>Settings</div>
+
+      <Card style={{marginBottom:12}}>
+        <div style={{fontSize:12,fontWeight:700,color:"#6b7280",marginBottom:10,letterSpacing:1}}>ACCOUNT</div>
+        {[["Name", user.name],["Role", user.role.charAt(0).toUpperCase()+user.role.slice(1)],["ID", user.id]].map(([k,v])=>(
+          <div key={k} style={{display:"flex",justifyContent:"space-between",padding:"7px 0",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+            <span style={{fontSize:13,color:"#6b7280"}}>{k}</span>
+            <span style={{fontSize:13,color:"#e2e8f0",fontWeight:600}}>{v}</span>
+          </div>
+        ))}
+      </Card>
+
+      <Card style={{marginBottom:12}}>
+        <div style={{fontSize:12,fontWeight:700,color:"#6b7280",marginBottom:10,letterSpacing:1}}>CHANGE PASSWORD</div>
+        {showPwChange ? (
+          <>
+            <Inp label="NEW PASSWORD" value={newPw} onChange={v=>{setNewPw(v);setPwErr("");}} type="password" placeholder="New password" error={pwErr}/>
+            <Inp label="CONFIRM PASSWORD" value={confirmPw} onChange={v=>{setConfirmPw(v);setPwErr("");}} type="password" placeholder="Confirm"/>
+            {pwOk && <div style={{fontSize:12,color:"#22c55e",marginBottom:8}}>✓ Password updated!</div>}
+            <div style={{display:"flex",gap:8}}>
+              <button onClick={changePw} style={{flex:1,background:"rgba(59,130,246,0.15)",border:"1px solid rgba(59,130,246,0.3)",borderRadius:9,padding:"10px",fontSize:12,color:"#60a5fa",cursor:"pointer",fontWeight:700}}>Save</button>
+              <button onClick={()=>setShowPwChange(false)} style={{flex:1,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:9,padding:"10px",fontSize:12,color:"#6b7280",cursor:"pointer"}}>Cancel</button>
+            </div>
+          </>
+        ) : (
+          <button onClick={()=>setShowPwChange(true)} style={{width:"100%",background:"rgba(59,130,246,0.08)",border:"1px solid rgba(59,130,246,0.15)",borderRadius:9,padding:"10px",fontSize:13,color:"#60a5fa",cursor:"pointer"}}>
+            Change My Password
+          </button>
+        )}
+      </Card>
+
+      {user.role==="owner" && (
+        <Card style={{marginBottom:12}}>
+          <div style={{display:"flex",justifyContent:"space-between",alignItems:"center",marginBottom:10}}>
+            <div style={{fontSize:12,fontWeight:700,color:"#6b7280",letterSpacing:1}}>GOOGLE SHEETS SYNC</div>
+            <SyncBadge status={syncStatus}/>
+          </div>
+          <div style={{fontSize:11,color:"#4b5563",marginBottom:10,lineHeight:1.5}}>
+            Paste your Google Apps Script URL below to automatically back up all customer and invoice data to a spreadsheet.
+          </div>
+          <textarea
+            value={sheetsUrl}
+            onChange={e=>setSheetsUrl(e.target.value)}
+            placeholder="https://script.google.com/macros/s/..."
+            rows={3}
+            style={{width:"100%",background:"#111827",border:"1px solid rgba(255,255,255,0.08)",borderRadius:9,padding:"10px 13px",fontSize:11,color:"#e2e8f0",outline:"none",boxSizing:"border-box",resize:"none",fontFamily:"monospace",marginBottom:8}}
+          />
+          <div style={{display:"flex",gap:8}}>
+            <button onClick={saveUrl}
+              style={{flex:1,background:"linear-gradient(135deg,#22c55e,#16a34a)",border:"none",borderRadius:10,padding:"10px",fontSize:12,fontWeight:700,color:"#fff",cursor:"pointer"}}>
+              {urlSaved ? "✓ Saved!" : "Save & Sync"}
+            </button>
+            {SHEETS_URL && (
+              <button onClick={onSyncNow}
+                style={{background:"rgba(59,130,246,0.12)",border:"1px solid rgba(59,130,246,0.2)",borderRadius:10,padding:"10px 14px",fontSize:12,color:"#60a5fa",cursor:"pointer",fontWeight:700}}>
+                ↻ Sync Now
+              </button>
+            )}
+          </div>
+        </Card>
+      )}
+
+      {user.role==="owner" && (
+        <Card style={{marginBottom:12}}>
+          <div style={{fontSize:12,fontWeight:700,color:"#6b7280",marginBottom:10,letterSpacing:1}}>TEAM</div>
+          {users.map(u=>(
+            <div key={u.id} style={{display:"flex",justifyContent:"space-between",alignItems:"center",padding:"7px 0",borderBottom:"1px solid rgba(255,255,255,0.04)"}}>
+              <div>
+                <div style={{fontSize:13,color:"#e2e8f0",fontWeight:600}}>{u.name}</div>
+                <div style={{fontSize:11,color:"#4b5563"}}>{u.role}</div>
+              </div>
+              <span style={{fontSize:11,color:"#374151",fontFamily:"monospace"}}>{u.password}</span>
+            </div>
+          ))}
+        </Card>
+      )}
+
+      <Card style={{marginBottom:20}}>
+        <div style={{fontSize:12,fontWeight:700,color:"#6b7280",marginBottom:10,letterSpacing:1}}>APP INFO</div>
+        <div style={{display:"flex",justifyContent:"space-between",padding:"7px 0"}}>
+          <span style={{fontSize:13,color:"#6b7280"}}>App</span>
+          <span style={{fontSize:13,color:"#e2e8f0"}}>Desert Salt Delivery v{APP_VERSION}</span>
+        </div>
+      </Card>
+
+      <button onClick={onLogout}
+        style={{width:"100%",background:"rgba(239,68,68,0.08)",border:"1px solid rgba(239,68,68,0.2)",borderRadius:12,padding:"14px",fontSize:14,fontWeight:700,color:"#ef4444",cursor:"pointer"}}>
+        Sign Out
+      </button>
+    </div>
+  );
+}
+
+// ── ROOT APP ──────────────────────────────────────────────────────────────────
+function App() {
+  const [users,      setUsers]      = useState(() => lsGet("dsd_users",      DEFAULT_USERS));
+  const [customers,  setCustomers]  = useState(() => lsGet("dsd_customers",  DEFAULT_CUSTOMERS));
+  const [invoices,   setInvoices]   = useState(() => lsGet("dsd_invoices",   DEFAULT_INVOICES));
+  const [user,       setUser]       = useState(() => lsGet("dsd_session",    null));
+  const [tab,        setTab]        = useState("home");
+  const [viewId,     setViewId]     = useState(null);
+  const [adding,     setAdding]     = useState(false);
+  const [syncStatus, setSyncStatus] = useState(null);
+
+  // Boot: load saved Sheets URL
+  useEffect(() => { SHEETS_URL = lsGet("dsd_sheets_url", ""); }, []);
+
+  useEffect(() => { lsSet("dsd_users",     users);     }, [users]);
+  useEffect(() => { lsSet("dsd_customers", customers); }, [customers]);
+  useEffect(() => { lsSet("dsd_invoices",  invoices);  }, [invoices]);
+  useEffect(() => { lsSet("dsd_session",   user);      }, [user]);
+
+  const sync = useCallback(async (custs, invs, usrs) => {
+    if (!SHEETS_URL) return;
+    setSyncStatus("syncing");
+    try {
+      await Promise.all([
+        DB.set("customers", custs || customers),
+        DB.set("invoices",  invs  || invoices),
+        DB.set("users",     (usrs || users).map(u => ({ id:u.id, name:u.name, role:u.role }))),
+      ]);
+      setSyncStatus("synced");
+    } catch {
+      setSyncStatus("error");
+    }
+    setTimeout(() => setSyncStatus(null), 3000);
+  }, [customers, invoices, users]);
+
+  const saveCustomer = (c) => {
+    const next = customers.some(x=>x.id===c.id)
+      ? customers.map(x=>x.id===c.id?c:x)
+      : [...customers, c];
+    setCustomers(next);
+    lsSet("dsd_customers", next);
+    sync(next, null, null);
+    setViewId(null);
+    setAdding(false);
+  };
+
+  const deleteCustomer = (id) => {
+    const next = customers.filter(c => c.id !== id);
+    setCustomers(next);
+    lsSet("dsd_customers", next);
+    sync(next, null, null);
+    setViewId(null);
+  };
+
+  const markComplete = (c) => {
+    const nextC = customers.map(x => x.id===c.id ? c : x);
+    setCustomers(nextC);
+    lsSet("dsd_customers", nextC);
+
+    const t = todayISO();
+    const exists = invoices.find(i => i.customerId===c.id && i.serviceDate===t);
+    let nextI = invoices;
+    if (!exists) {
+      nextI = [...invoices, {
+        id: Date.now(),
+        customerId: c.id,
+        customer: c.customer,
+        amount: c.pricePerVisit,
+        serviceDate: t,
+        status: "Pending",
+        paidDate: "",
+        notes: "",
+      }];
+      setInvoices(nextI);
+      lsSet("dsd_invoices", nextI);
+    }
+    sync(nextC, nextI, null);
+  };
+
+  if (!user) return <LoginScreen users={users} onLogin={u => setUser(u)}/>;
+
+  const viewedCustomer = viewId ? customers.find(c=>c.id===viewId) : null;
+
+  if (adding) {
+    return <AddCustomer onSave={saveCustomer} onBack={()=>setAdding(false)}/>;
+  }
+
+  if (viewedCustomer) {
+    return (
+      <CustomerDetail
+        customer={viewedCustomer}
+        onBack={() => setViewId(null)}
+        onSave={saveCustomer}
+        onDelete={deleteCustomer}
+        onMarkComplete={markComplete}
+        user={user}
+      />
+    );
+  }
+
+  const renderTab = () => {
+    switch(tab) {
+      case "home":      return <HomeTab customers={customers} invoices={invoices} onViewCustomer={setViewId} user={user}/>;
+      case "customers": return <CustomersTab customers={customers} onView={setViewId} onAdd={()=>setAdding(true)}/>;
+      case "schedule":  return <ScheduleTab customers={customers} onViewCustomer={setViewId}/>;
+      case "revenue":   return <RevenueTab customers={customers} invoices={invoices}
+        onUpdateInvoice={inv=>{const next=invoices.map(i=>i.id===inv.id?inv:i);setInvoices(next);lsSet("dsd_invoices",next);sync(null,next,null);}}
+        onAddInvoice={inv=>{const next=[...invoices,inv];setInvoices(next);lsSet("dsd_invoices",next);sync(null,next,null);}}/>;
+      case "settings":  return <SettingsTab user={user} users={users} onLogout={()=>setUser(null)} onUpdateUsers={u=>{setUsers(u);lsSet("dsd_users",u);sync(null,null,u);}} onSyncNow={()=>sync()} syncStatus={syncStatus}/>;
+      default: return null;
+    }
+  };
+
+  return (
+    <div style={{minHeight:"100vh",background:"#060d1a"}}>
+      {/* Top bar */}
+      <div style={{background:"#0a1628",borderBottom:"1px solid rgba(59,130,246,0.12)",padding:"12px 16px",display:"flex",alignItems:"center",justifyContent:"space-between"}}>
+        <div style={{display:"flex",alignItems:"center",gap:10}}>
+          <span style={{fontSize:20}}>🧂</span>
+          <div>
+            <div style={{fontSize:13,fontWeight:800,color:"#e2e8f0",lineHeight:1}}>Desert Salt Delivery</div>
+            <div style={{fontSize:10,color:"#374151"}}>Water Softener Salt Service</div>
+          </div>
+        </div>
+        <div style={{display:"flex",alignItems:"center",gap:8}}>
+          <SyncBadge status={syncStatus}/>
+          <span style={{fontSize:11,color:"#374151"}}>{user.name}</span>
+        </div>
+      </div>
+
+      {renderTab()}
+
+      <BottomNav active={tab} onChange={setTab} role={user.role}/>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById("root")).render(<App/>);
+  </script>
+</body>
+</html>

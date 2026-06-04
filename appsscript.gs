@@ -1,0 +1,105 @@
+// Desert Salt Delivery — Google Apps Script
+// Deploy as: Web App → Execute as: Me → Who has access: Anyone
+// Paste the deployment URL into the app Settings → Google Sheets Sync
+
+const SHEET_ID = SpreadsheetApp.getActiveSpreadsheet().getId();
+
+function doGet(e) {
+  try {
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+    const data = {};
+    ss.getSheets().forEach(sheet => {
+      const name = sheet.getName();
+      const rows = sheet.getDataRange().getValues();
+      if (rows.length < 2) { data[name] = []; return; }
+      const headers = rows[0];
+      data[name] = rows.slice(1).map(row => {
+        const obj = {};
+        headers.forEach((h, i) => { obj[h] = row[i]; });
+        return obj;
+      });
+    });
+    return ContentService
+      .createTextOutput(JSON.stringify({ success: true, data }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch(err) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ success: false, error: err.message }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function doPost(e) {
+  try {
+    const body = JSON.parse(e.postData.contents);
+    const { sheet: sheetName, action, payload } = body;
+
+    const ss = SpreadsheetApp.getActiveSpreadsheet();
+
+    if (action === "set") {
+      setSheet(ss, sheetName, payload);
+    } else if (action === "append") {
+      appendRow(ss, sheetName, payload);
+    }
+
+    return ContentService
+      .createTextOutput(JSON.stringify({ success: true }))
+      .setMimeType(ContentService.MimeType.JSON);
+  } catch(err) {
+    return ContentService
+      .createTextOutput(JSON.stringify({ success: false, error: err.message }))
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+}
+
+function setSheet(ss, sheetName, rows) {
+  if (!Array.isArray(rows) || rows.length === 0) return;
+
+  let sheet = ss.getSheetByName(sheetName);
+  if (!sheet) sheet = ss.insertSheet(sheetName);
+  sheet.clearContents();
+
+  const headers = Object.keys(rows[0]);
+  const values  = rows.map(row => headers.map(h => {
+    const v = row[h];
+    if (v === null || v === undefined) return "";
+    if (typeof v === "object") return JSON.stringify(v);
+    return v;
+  }));
+
+  sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  if (values.length > 0) {
+    sheet.getRange(2, 1, values.length, headers.length).setValues(values);
+  }
+
+  // Style the header row
+  const headerRange = sheet.getRange(1, 1, 1, headers.length);
+  headerRange.setBackground("#1a73e8");
+  headerRange.setFontColor("#ffffff");
+  headerRange.setFontWeight("bold");
+  sheet.setFrozenRows(1);
+}
+
+function appendRow(ss, sheetName, row) {
+  let sheet = ss.getSheetByName(sheetName);
+  if (!sheet) {
+    sheet = ss.insertSheet(sheetName);
+    const headers = Object.keys(row);
+    sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+    const headerRange = sheet.getRange(1, 1, 1, headers.length);
+    headerRange.setBackground("#1a73e8");
+    headerRange.setFontColor("#ffffff");
+    headerRange.setFontWeight("bold");
+    sheet.setFrozenRows(1);
+  }
+
+  const headers = sheet.getRange(1, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const values  = headers.map(h => {
+    const v = row[h];
+    if (v === null || v === undefined) return "";
+    if (typeof v === "object") return JSON.stringify(v);
+    return v;
+  });
+
+  sheet.appendRow(values);
+}
