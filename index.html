@@ -1041,8 +1041,28 @@ function App() {
   const [adding,     setAdding]     = useState(false);
   const [syncStatus, setSyncStatus] = useState(null);
 
+  const [loading, setLoading] = useState(false);
+
   // Boot: load saved Sheets URL
   useEffect(() => { SHEETS_URL = lsGet("dsd_sheets_url", ""); }, []);
+
+  // When user logs in, pull latest data from Google Sheets
+  useEffect(() => {
+    if (!user) return;
+    setLoading(true);
+    DB.getAll().then(data => {
+      if (data) {
+        if (Array.isArray(data.customers) && data.customers.length > 0) {
+          setCustomers(data.customers);
+          lsSet("dsd_customers", data.customers);
+        }
+        if (Array.isArray(data.invoices) && data.invoices.length > 0) {
+          setInvoices(data.invoices);
+          lsSet("dsd_invoices", data.invoices);
+        }
+      }
+    }).finally(() => setLoading(false));
+  }, [user?.id]);
 
   useEffect(() => { lsSet("dsd_users",     users);     }, [users]);
   useEffect(() => { lsSet("dsd_customers", customers); }, [customers]);
@@ -1110,6 +1130,15 @@ function App() {
   };
 
   if (!user) return <LoginScreen users={users} onLogin={u => setUser(u)}/>;
+
+  if (loading) return (
+    <div style={{minHeight:"100vh",background:"#060d1a",display:"flex",flexDirection:"column",alignItems:"center",justifyContent:"center",gap:16}}>
+      <div style={{fontSize:48}}>🧂</div>
+      <div style={{width:36,height:36,border:"3px solid rgba(59,130,246,0.2)",borderTop:"3px solid #3b82f6",borderRadius:"50%",animation:"spin 1s linear infinite"}}/>
+      <div style={{fontSize:13,color:"#4b5563"}}>Loading your data...</div>
+      <style>{`@keyframes spin{to{transform:rotate(360deg)}}`}</style>
+    </div>
+  );
 
   const viewedCustomer = viewId ? customers.find(c=>c.id===viewId) : null;
 
