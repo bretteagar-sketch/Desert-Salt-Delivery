@@ -1095,6 +1095,35 @@ function App() {
     setTimeout(() => setSyncStatus(null), 3000);
   }, [customers, invoices, users]);
 
+  const syncNow = useCallback(async () => {
+    if (!SHEETS_URL) return;
+    setSyncStatus("syncing");
+    try {
+      // Push current data up first
+      await Promise.all([
+        DB.set("customers", customers),
+        DB.set("invoices",  invoices),
+        DB.set("users",     users.map(u => ({ id:u.id, name:u.name, role:u.role }))),
+      ]);
+      // Then pull latest back down
+      const data = await DB.getAll();
+      if (data) {
+        if (Array.isArray(data.customers) && data.customers.length > 0) {
+          setCustomers(data.customers);
+          lsSet("dsd_customers", data.customers);
+        }
+        if (Array.isArray(data.invoices) && data.invoices.length > 0) {
+          setInvoices(data.invoices);
+          lsSet("dsd_invoices", data.invoices);
+        }
+      }
+      setSyncStatus("synced");
+    } catch {
+      setSyncStatus("error");
+    }
+    setTimeout(() => setSyncStatus(null), 3000);
+  }, [customers, invoices, users]);
+
   const saveCustomer = (c) => {
     const next = customers.some(x=>x.id===c.id)
       ? customers.map(x=>x.id===c.id?c:x)
@@ -1196,6 +1225,10 @@ function App() {
         </div>
         <div style={{display:"flex",alignItems:"center",gap:8}}>
           <SyncBadge status={syncStatus}/>
+          <button onClick={syncNow} disabled={syncStatus==="syncing"}
+            style={{background:"rgba(59,130,246,0.12)",border:"1px solid rgba(59,130,246,0.25)",borderRadius:8,padding:"6px 10px",fontSize:12,color:"#60a5fa",cursor:"pointer",fontWeight:700,opacity:syncStatus==="syncing"?0.5:1}}>
+            {syncStatus==="syncing" ? "⏳" : "↻ Sync"}
+          </button>
           <span style={{fontSize:11,color:"#374151"}}>{user.name}</span>
         </div>
       </div>
