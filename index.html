@@ -766,10 +766,11 @@ function ScheduleTab({customers, onViewCustomer}) {
 }
 
 // ── REVENUE TAB ───────────────────────────────────────────────────────────────
-function RevenueTab({customers, invoices, onUpdateInvoice, onAddInvoice}) {
+function RevenueTab({customers, invoices, onUpdateInvoice, onAddInvoice, onDeleteInvoice}) {
   const [filter, setFilter] = useState("all");
   const [showAdd, setShowAdd] = useState(false);
   const [newInv, setNewInv] = useState({ customerId:"", amount:"", serviceDate: todayISO(), notes:"" });
+  const [confirmDelId, setConfirmDelId] = useState(null);
 
   const filtered = invoices.filter(i => filter==="all" || i.status.toLowerCase()===filter);
   const totalRevenue = invoices.filter(i=>i.status==="Paid").reduce((s,i)=>s+i.amount,0);
@@ -877,6 +878,25 @@ function RevenueTab({customers, invoices, onUpdateInvoice, onAddInvoice}) {
                   </button>
                 )}
               </div>
+            )}
+
+            {/* Delete */}
+            {confirmDelId === inv.id ? (
+              <div style={{display:"flex",gap:8,marginTop:8}}>
+                <button onClick={()=>{ onDeleteInvoice(inv.id); setConfirmDelId(null); }}
+                  style={{flex:1,background:"rgba(239,68,68,0.15)",border:"1px solid rgba(239,68,68,0.3)",borderRadius:9,padding:"8px",fontSize:12,color:"#ef4444",cursor:"pointer",fontWeight:700}}>
+                  Yes, Delete
+                </button>
+                <button onClick={()=>setConfirmDelId(null)}
+                  style={{flex:1,background:"rgba(255,255,255,0.04)",border:"1px solid rgba(255,255,255,0.08)",borderRadius:9,padding:"8px",fontSize:12,color:"#6b7280",cursor:"pointer"}}>
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <button onClick={()=>setConfirmDelId(inv.id)}
+                style={{width:"100%",background:"none",border:"none",marginTop:6,fontSize:11,color:"#374151",cursor:"pointer",textAlign:"right",padding:"4px 0"}}>
+                🗑 Delete invoice
+              </button>
             )}
           </div>
         ))}
@@ -1116,6 +1136,7 @@ function App() {
       case "customers": return <CustomersTab customers={customers} onView={setViewId} onAdd={()=>setAdding(true)}/>;
       case "schedule":  return <ScheduleTab customers={customers} onViewCustomer={setViewId}/>;
       case "revenue":   return <RevenueTab customers={customers} invoices={invoices}
+        onDeleteInvoice={id=>{const next=invoices.filter(i=>i.id!==id);setInvoices(next);lsSet("dsd_invoices",next);sync(null,next,null);}}
         onUpdateInvoice={inv=>{const next=invoices.map(i=>i.id===inv.id?inv:i);setInvoices(next);lsSet("dsd_invoices",next);sync(null,next,null);}}
         onAddInvoice={inv=>{const next=[...invoices,inv];setInvoices(next);lsSet("dsd_invoices",next);sync(null,next,null);}}/>;
       case "settings":  return <SettingsTab user={user} users={users} onLogout={()=>setUser(null)} onUpdateUsers={u=>{setUsers(u);lsSet("dsd_users",u);sync(null,null,u);}} onSyncNow={()=>sync()} syncStatus={syncStatus}/>;
