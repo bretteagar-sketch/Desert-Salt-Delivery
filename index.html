@@ -51,12 +51,10 @@ const DB = {
   async set(sheet, payload)   { return this.post({ sheet, action:"set",    payload }); },
   async append(sheet, payload){ return this.post({ sheet, action:"append", payload }); },
 };
-const FREQ_OPTIONS = [
-  { value: "monthly",    label: "Monthly",       days: 30 },
-  { value: "every2mo",   label: "Every 2 Months", days: 60 },
-  { value: "weekly",     label: "Weekly",         days: 7  },
-  { value: "biweekly",   label: "Every 2 Weeks",  days: 14 },
-];
+// frequency is stored as a number of weeks (1–16)
+const FREQ_WEEKS = Array.from({length:16},(_,i)=>i+1);
+const freqLabel = (w) => w === 1 ? "Every week" : `Every ${w} weeks`;
+const freqDays  = (w) => (w || 4) * 7;
 const DAYS = ["Sunday","Monday","Tuesday","Wednesday","Thursday","Friday","Saturday"];
 const STATUS_STYLES = {
   "Due Today": { bg:"rgba(245,166,35,0.15)", text:"#f5a623", border:"rgba(245,166,35,0.35)" },
@@ -91,17 +89,17 @@ const DEFAULT_CUSTOMERS = [
   {
     id: 1, customer: "Marcus Holt", phone: "4806453994",
     address: "4821 Desert Willow Dr, Queen Creek, AZ 85142",
-    bags: 2, frequency: "monthly", pricePerVisit: 45,
+    bags: 2, frequency: 4, pricePerVisit: 45,
     serviceDay: "Monday",
     nextService: isoDate(addDays(today, 0)),
-    lastService: isoDate(addDays(today, -30)),
+    lastService: isoDate(addDays(today, -28)),
     completedDates: [],
     notes: "Gate code 1234. 2-car garage on left.", visits: 8, order: 1,
   },
   {
     id: 2, customer: "Sandra Voss", phone: "4805551234",
     address: "112 Cactus Bloom Ln, Queen Creek, AZ 85142",
-    bags: 3, frequency: "monthly", pricePerVisit: 50,
+    bags: 3, frequency: 4, pricePerVisit: 50,
     serviceDay: "Monday",
     nextService: isoDate(addDays(today, 3)),
     lastService: isoDate(addDays(today, -27)),
@@ -111,7 +109,7 @@ const DEFAULT_CUSTOMERS = [
   {
     id: 3, customer: "Tony & Rita Espinoza", phone: "4807779999",
     address: "5503 Saguaro Ridge Ct, Queen Creek, AZ 85142",
-    bags: 2, frequency: "every2mo", pricePerVisit: 50,
+    bags: 2, frequency: 8, pricePerVisit: 50,
     serviceDay: "Wednesday",
     nextService: isoDate(addDays(today, -3)),
     lastService: isoDate(addDays(today, -63)),
@@ -121,7 +119,7 @@ const DEFAULT_CUSTOMERS = [
   {
     id: 4, customer: "Derek Clune", phone: "4801112222",
     address: "2288 Ironwood Pass Dr, Gilbert, AZ 85298",
-    bags: 2, frequency: "monthly", pricePerVisit: 45,
+    bags: 2, frequency: 4, pricePerVisit: 45,
     serviceDay: "Thursday",
     nextService: isoDate(addDays(today, 10)),
     lastService: isoDate(addDays(today, -20)),
@@ -131,7 +129,7 @@ const DEFAULT_CUSTOMERS = [
   {
     id: 5, customer: "Pinnacle HOA", phone: "4803334444",
     address: "23000 N Pima Rd, San Tan Valley, AZ 85143",
-    bags: 4, frequency: "monthly", pricePerVisit: 80,
+    bags: 4, frequency: 4, pricePerVisit: 80,
     serviceDay: "Friday",
     nextService: isoDate(addDays(today, 7)),
     lastService: isoDate(addDays(today, -23)),
@@ -403,7 +401,6 @@ function CustomersTab({customers, onView, onAdd}) {
         )}
         {filtered.map(c => {
           const status = calcStatus(c.nextService, c.completedDates);
-          const freq = FREQ_OPTIONS.find(f=>f.value===c.frequency);
           return (
             <div key={c.id} onClick={() => onView(c.id)}
               style={{background:"#0d1626",borderRadius:14,padding:"14px 16px",border:"1px solid rgba(255,255,255,0.06)",marginBottom:10,cursor:"pointer"}}>
@@ -414,7 +411,7 @@ function CustomersTab({customers, onView, onAdd}) {
               <div style={{fontSize:11,color:"#4b5563",marginBottom:8,overflow:"hidden",textOverflow:"ellipsis",whiteSpace:"nowrap"}}>{c.address}</div>
               <div style={{display:"flex",gap:12,flexWrap:"wrap"}}>
                 <span style={{fontSize:11,color:"#6b7280"}}>🛍️ {c.bags} bag{c.bags!==1?"s":""}/visit</span>
-                <span style={{fontSize:11,color:"#6b7280"}}>🔄 {freq?.label||c.frequency}</span>
+                <span style={{fontSize:11,color:"#6b7280"}}>🔄 {freqLabel(c.frequency)}</span>
                 <span style={{fontSize:11,color:"#6b7280"}}>💵 ${c.pricePerVisit}/visit</span>
               </div>
               {c.nextService && (
@@ -438,7 +435,6 @@ function CustomerDetail({customer, onBack, onSave, onDelete, onMarkComplete, use
   const [confirmDel, setConfirmDel] = useState(false);
   const set = (k,v) => setC(x => ({...x,[k]:v}));
   const status = calcStatus(c.nextService, c.completedDates);
-  const freq = FREQ_OPTIONS.find(f=>f.value===c.frequency);
   const isDoneToday = c.completedDates?.includes(todayISO());
 
   const save = () => {
@@ -448,8 +444,7 @@ function CustomerDetail({customer, onBack, onSave, onDelete, onMarkComplete, use
 
   const markComplete = () => {
     const t = todayISO();
-    const freqDays = FREQ_OPTIONS.find(f=>f.value===c.frequency)?.days || 30;
-    const next = isoDate(addDays(new Date(), freqDays));
+    const next = isoDate(addDays(new Date(), freqDays(c.frequency)));
     const updated = {
       ...c,
       lastService: t,
@@ -476,8 +471,8 @@ function CustomerDetail({customer, onBack, onSave, onDelete, onMarkComplete, use
             <Sel label="BAGS PER VISIT" value={String(c.bags)} onChange={v=>set("bags",parseInt(v))}>
               {[1,2,3,4,5,6].map(n=><option key={n} value={n}>{n} bag{n!==1?"s":""}</option>)}
             </Sel>
-            <Sel label="FREQUENCY" value={c.frequency} onChange={v=>set("frequency",v)}>
-              {FREQ_OPTIONS.map(f=><option key={f.value} value={f.value}>{f.label}</option>)}
+            <Sel label="FREQUENCY" value={String(c.frequency)} onChange={v=>set("frequency",parseInt(v))}>
+              {FREQ_WEEKS.map(w=><option key={w} value={w}>{freqLabel(w)}</option>)}
             </Sel>
           </div>
 
@@ -569,7 +564,7 @@ function CustomerDetail({customer, onBack, onSave, onDelete, onMarkComplete, use
           <div style={{fontSize:12,fontWeight:700,color:"#6b7280",marginBottom:10,letterSpacing:1}}>SERVICE DETAILS</div>
           {[
             ["Bags per visit", `🛍️ ${c.bags} bag${c.bags!==1?"s":""}`],
-            ["Frequency", `🔄 ${freq?.label||c.frequency}`],
+            ["Frequency", `🔄 ${freqLabel(c.frequency)}`],
             ["Price per visit", `💵 $${c.pricePerVisit}`],
             ["Service day", `📆 ${c.serviceDay}`],
             ["Last service", c.lastService ? `📅 ${fmtShort(c.lastService)}` : "—"],
@@ -598,7 +593,7 @@ function CustomerDetail({customer, onBack, onSave, onDelete, onMarkComplete, use
 function AddCustomer({onSave, onBack}) {
   const [c, setC] = useState({
     customer:"", phone:"", address:"",
-    bags:2, frequency:"monthly", pricePerVisit:45,
+    bags:2, frequency:4, pricePerVisit:45,
     serviceDay:"Monday",
     nextService: isoDate(addDays(new Date(),7)),
     notes:"", visits:0,
@@ -632,8 +627,8 @@ function AddCustomer({onSave, onBack}) {
           <Sel label="BAGS PER VISIT" value={String(c.bags)} onChange={v=>set("bags",parseInt(v))}>
             {[1,2,3,4,5,6].map(n=><option key={n} value={n}>{n} bag{n!==1?"s":""}</option>)}
           </Sel>
-          <Sel label="FREQUENCY" value={c.frequency} onChange={v=>set("frequency",v)}>
-            {FREQ_OPTIONS.map(f=><option key={f.value} value={f.value}>{f.label}</option>)}
+          <Sel label="FREQUENCY" value={String(c.frequency)} onChange={v=>set("frequency",parseInt(v))}>
+            {FREQ_WEEKS.map(w=><option key={w} value={w}>{freqLabel(w)}</option>)}
           </Sel>
         </div>
 
@@ -754,7 +749,7 @@ function ScheduleTab({customers, onViewCustomer}) {
                   <div style={{display:"flex",gap:6,flexWrap:"wrap",alignItems:"center"}}>
                     <Badge status={c.status}/>
                     <span style={{fontSize:11,color:"#6b7280"}}>{c.bags} bags</span>
-                    <span style={{fontSize:11,color:"#374151"}}>{FREQ_OPTIONS.find(f=>f.value===c.frequency)?.label}</span>
+                    <span style={{fontSize:11,color:"#374151"}}>{freqLabel(c.frequency)}</span>
                   </div>
                 </div>
                 <div style={{textAlign:"right",flexShrink:0}}>
