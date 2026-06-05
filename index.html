@@ -34,22 +34,20 @@ const APP_VERSION = "1.0.0";
 let SHEETS_URL = "https://script.google.com/macros/s/AKfycbxFUjVNTHWtqRkbCLi9gKKoJsqPsLXPoklYhn3lOYG224-5_e0ogWVyYf_gzOc6sJNq5A/exec";
 
 const DB = {
-  async post(body) {
+  async send(params) {
     if (!SHEETS_URL) return { success: false };
     try {
-      const res = await fetch(SHEETS_URL, { method:"POST", headers:{"Content-Type":"text/plain"}, body:JSON.stringify(body) });
-      try { return await res.json(); } catch { return { success: true }; }
-    } catch {
-      try { await fetch(SHEETS_URL, { method:"POST", mode:"no-cors", headers:{"Content-Type":"text/plain"}, body:JSON.stringify(body) }); } catch {}
-      return { success: true };
-    }
+      const url = SHEETS_URL + "?" + new URLSearchParams({ ...params, t: Date.now() }).toString();
+      const res = await fetch(url);
+      return await res.json();
+    } catch { return { success: false }; }
   },
   async getAll() {
     if (!SHEETS_URL) return null;
-    try { const res = await fetch(`${SHEETS_URL}?t=${Date.now()}`); const j = await res.json(); return j.success ? j.data : null; } catch { return null; }
+    try { const res = await fetch(`${SHEETS_URL}?t=${Date.now()}`); const j = await res.json(); return j && j.success ? j.data : null; } catch { return null; }
   },
-  async set(sheet, payload)   { return this.post({ sheet, action:"set",    payload }); },
-  async append(sheet, payload){ return this.post({ sheet, action:"append", payload }); },
+  async set(sheet, payload)    { return this.send({ write:"1", action:"set",    sheet, data: JSON.stringify(payload) }); },
+  async append(sheet, payload) { return this.send({ write:"1", action:"append", sheet, data: JSON.stringify(payload) }); },
 };
 // frequency is stored as a number of weeks (1–16)
 const FREQ_WEEKS = Array.from({length:16},(_,i)=>i+1);
