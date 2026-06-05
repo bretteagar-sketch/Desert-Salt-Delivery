@@ -3,10 +3,10 @@
 // After editing, go to Deploy → Manage Deployments → edit → set to "New version" → Update
 
 function doGet(e) {
-  const ss = SpreadsheetApp.getActiveSpreadsheet();
+  const ss = SpreadsheetApp.openById("1JlsEhO5Zvk_VcDBVkUsvfChsLNi4i7OdliVHtGe25tg");
 
   // Handle write operations sent as GET params
-  if (e.parameter && e.parameter.write === "1") {
+  if (e && e.parameter && e.parameter.write === "1") {
     try {
       const action  = e.parameter.action;
       const sheet   = e.parameter.sheet;
