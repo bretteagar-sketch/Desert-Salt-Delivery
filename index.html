@@ -1052,8 +1052,8 @@ function App() {
 
   const [loading, setLoading] = useState(false);
 
-  // Boot: use saved URL if set, otherwise keep the hardcoded default
-  useEffect(() => { const saved = lsGet("dsd_sheets_url",""); if(saved) SHEETS_URL = saved; }, []);
+  // Boot: clear stale saved URL so hardcoded URL always wins
+  useEffect(() => { localStorage.removeItem("dsd_sheets_url"); }, []);
 
   // When user logs in, pull latest data from Google Sheets
   useEffect(() => {
