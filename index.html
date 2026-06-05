@@ -1053,8 +1053,8 @@ function App() {
 
   const [loading, setLoading] = useState(false);
 
-  // Boot: load saved Sheets URL
-  useEffect(() => { SHEETS_URL = lsGet("dsd_sheets_url", ""); }, []);
+  // Boot: use saved URL if set, otherwise keep the hardcoded default
+  useEffect(() => { const saved = lsGet("dsd_sheets_url",""); if(saved) SHEETS_URL = saved; }, []);
 
   // When user logs in, pull latest data from Google Sheets
   useEffect(() => {
