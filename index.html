@@ -34,20 +34,30 @@ const APP_VERSION = "1.0.0";
 let SHEETS_URL = "https://script.google.com/macros/s/AKfycbwoPJTQCju4GcGv8Wm4bOCJP5sWwBsjsORRV2hNt1BiVjWcO5GJ8fEfKMwUwpEk2qLD/exec";
 
 const DB = {
+  jsonp(url) {
+    return new Promise((resolve) => {
+      const cb = "_dsd" + Date.now() + Math.random().toString(36).slice(2);
+      const timer = setTimeout(() => { cleanup(); resolve({ success: false }); }, 10000);
+      const cleanup = () => { clearTimeout(timer); delete window[cb]; const s = document.getElementById(cb); if(s) s.remove(); };
+      window[cb] = (r) => { cleanup(); resolve(r); };
+      const s = document.createElement("script");
+      s.id = cb;
+      s.onerror = () => { cleanup(); resolve({ success: false }); };
+      s.src = url + "&callback=" + cb;
+      document.body.appendChild(s);
+    });
+  },
   async send(params) {
     if (!SHEETS_URL) return { success: false };
-    try {
-      const url = SHEETS_URL + "?" + new URLSearchParams({ ...params, t: Date.now() }).toString();
-      console.log("[DSD] Writing sheet:", params.sheet, "rows:", params.data ? JSON.parse(params.data).length : 0);
-      const res = await fetch(url);
-      const j = await res.json();
-      console.log("[DSD] Response:", JSON.stringify(j));
-      return j;
-    } catch(err) { console.error("[DSD] Error:", err); return { success: false }; }
+    const url = SHEETS_URL + "?" + new URLSearchParams({ ...params, t: Date.now() }).toString();
+    console.log("[DSD] Writing sheet:", params.sheet, "rows:", params.data ? JSON.parse(params.data).length : 0);
+    const result = await this.jsonp(url);
+    console.log("[DSD] Response:", JSON.stringify(result));
+    return result;
   },
   async getAll() {
     if (!SHEETS_URL) return null;
-    try { const res = await fetch(`${SHEETS_URL}?t=${Date.now()}`); const j = await res.json(); return j && j.success ? j.data : null; } catch { return null; }
+    try { const r = await this.jsonp(SHEETS_URL + "?t=" + Date.now()); return r && r.success ? r.data : null; } catch { return null; }
   },
   async set(sheet, payload)    { return this.send({ write:"1", action:"set",    sheet, data: JSON.stringify(payload) }); },
   async append(sheet, payload) { return this.send({ write:"1", action:"append", sheet, data: JSON.stringify(payload) }); },

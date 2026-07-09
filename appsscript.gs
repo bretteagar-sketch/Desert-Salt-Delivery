@@ -4,8 +4,20 @@
 
 function doGet(e) {
   const ss = SpreadsheetApp.openById("1JlsEhO5Zvk_VcDBVkUsvfChsLNi4i7OdliVHtGe25tg");
+  const cb = e && e.parameter && e.parameter.callback;
 
-  // Handle write operations sent as GET params
+  function respond(obj) {
+    const json = JSON.stringify(obj);
+    if (cb) {
+      return ContentService
+        .createTextOutput(cb + "(" + json + ");")
+        .setMimeType(ContentService.MimeType.JAVASCRIPT);
+    }
+    return ContentService
+      .createTextOutput(json)
+      .setMimeType(ContentService.MimeType.JSON);
+  }
+
   if (e && e.parameter && e.parameter.write === "1") {
     try {
       const action  = e.parameter.action;
@@ -13,17 +25,12 @@ function doGet(e) {
       const payload = JSON.parse(e.parameter.data || "[]");
       if (action === "set")    setSheet(ss, sheet, payload);
       if (action === "append") appendRow(ss, sheet, payload);
-      return ContentService
-        .createTextOutput(JSON.stringify({ success: true }))
-        .setMimeType(ContentService.MimeType.JSON);
+      return respond({ success: true });
     } catch(err) {
-      return ContentService
-        .createTextOutput(JSON.stringify({ success: false, error: err.message }))
-        .setMimeType(ContentService.MimeType.JSON);
+      return respond({ success: false, error: err.message });
     }
   }
 
-  // Normal read — return all sheets as JSON
   try {
     const data = {};
     ss.getSheets().forEach(sheet => {
@@ -37,13 +44,9 @@ function doGet(e) {
         return obj;
       });
     });
-    return ContentService
-      .createTextOutput(JSON.stringify({ success: true, data }))
-      .setMimeType(ContentService.MimeType.JSON);
+    return respond({ success: true, data });
   } catch(err) {
-    return ContentService
-      .createTextOutput(JSON.stringify({ success: false, error: err.message }))
-      .setMimeType(ContentService.MimeType.JSON);
+    return respond({ success: false, error: err.message });
   }
 }
 
