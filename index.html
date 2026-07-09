@@ -38,8 +38,9 @@ const DB = {
     if (!SHEETS_URL) return { success: false };
     try {
       const url = SHEETS_URL + "?" + new URLSearchParams({ ...params, t: Date.now() }).toString();
-      await new Promise((resolve) => { const img = new Image(); img.onload = img.onerror = resolve; img.src = url; });
-      return { success: true };
+      const res = await fetch(url);
+      const j = await res.json();
+      return j;
     } catch { return { success: false }; }
   },
   async getAll() {
@@ -1081,13 +1082,19 @@ function App() {
   useEffect(() => {
     if (!user) return;
     clearTimeout(syncTimerRef.current);
-    syncTimerRef.current = setTimeout(() => {
+    syncTimerRef.current = setTimeout(async () => {
       if (SHEETS_URL) {
-        DB.set("customers", customers);
-        DB.set("invoices",  invoices);
-        DB.set("users",     users.map(u => ({ id:u.id, name:u.name, role:u.role })));
-        setSyncStatus("synced");
-        setTimeout(() => setSyncStatus(null), 2000);
+        setSyncStatus("syncing");
+        try {
+          const results = await Promise.all([
+            DB.set("customers", customers),
+            DB.set("invoices",  invoices),
+            DB.set("users",     users.map(u => ({ id:u.id, name:u.name, role:u.role }))),
+          ]);
+          const ok = results.every(r => r && r.success);
+          setSyncStatus(ok ? "synced" : "error");
+        } catch { setSyncStatus("error"); }
+        setTimeout(() => setSyncStatus(null), 3000);
       }
     }, 2000);
   }, [customers, invoices]);
