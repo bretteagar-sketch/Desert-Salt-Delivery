@@ -1077,6 +1077,21 @@ function App() {
   useEffect(() => { lsSet("dsd_invoices",  invoices);  }, [invoices]);
   useEffect(() => { lsSet("dsd_session",   user);      }, [user]);
 
+  const syncTimerRef = useRef(null);
+  useEffect(() => {
+    if (!user) return;
+    clearTimeout(syncTimerRef.current);
+    syncTimerRef.current = setTimeout(() => {
+      if (SHEETS_URL) {
+        DB.set("customers", customers);
+        DB.set("invoices",  invoices);
+        DB.set("users",     users.map(u => ({ id:u.id, name:u.name, role:u.role })));
+        setSyncStatus("synced");
+        setTimeout(() => setSyncStatus(null), 2000);
+      }
+    }, 2000);
+  }, [customers, invoices]);
+
   const sync = useCallback(async (custs, invs, usrs) => {
     if (!SHEETS_URL) return;
     setSyncStatus("syncing");
