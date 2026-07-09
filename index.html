@@ -38,10 +38,12 @@ const DB = {
     if (!SHEETS_URL) return { success: false };
     try {
       const url = SHEETS_URL + "?" + new URLSearchParams({ ...params, t: Date.now() }).toString();
+      console.log("[DSD] Writing sheet:", params.sheet, "rows:", params.data ? JSON.parse(params.data).length : 0);
       const res = await fetch(url);
       const j = await res.json();
+      console.log("[DSD] Response:", JSON.stringify(j));
       return j;
-    } catch { return { success: false }; }
+    } catch(err) { console.error("[DSD] Error:", err); return { success: false }; }
   },
   async getAll() {
     if (!SHEETS_URL) return null;
